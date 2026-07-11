@@ -1,0 +1,69 @@
+{
+  "name": "@bobcgn/skill-central",
+  "version": "0.2.5",
+  "private": false,
+  "description": "Local MCP Server for cross-IDE AI skill distribution and reuse",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "skill-central": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "dist/web/",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BobcGn/skill-central.git"
+  },
+  "homepage": "https://github.com/BobcGn/skill-central#readme",
+  "bugs": {
+    "url": "https://github.com/BobcGn/skill-central/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "skills",
+    "prompts",
+    "cursor",
+    "windsurf",
+    "claude"
+  ],
+  "license": "MIT",
+  "provenance": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "dev:mcp": "tsx watch src/index.ts mcp",
+    "dev:board": "tsx src/index.ts board",
+    "dev:init": "tsx src/index.ts init",
+    "dev:web": "tsx watch src/index.ts board",
+    "build": "tsc",
+    "build:web": "mkdir -p dist/web && cp -R src/web/static/. dist/web/",
+    "lint": "tsc --noEmit",
+    "pretest": "npm run build && npm run build:web",
+    "test": "bash scripts/test.sh",
+    "prepublishOnly": "npm run build && npm run build:web",
+    "start": "node dist/index.js mcp"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "@modelcontextprotocol/sdk": "^1.9.0",
+    "commander": "^14.0.3",
+    "hono": "^4.12.25",
+    "js-yaml": "^4.1.1",
+    "tar-stream": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.14.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}
