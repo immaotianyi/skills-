@@ -15,6 +15,18 @@ node products/xhs-research-studio/server.mjs
 
 No npm install or database is required. Runtime data is written to `products/xhs-research-studio/data/` by default; override with `XHS_STUDIO_DATA=/path`.
 
+## Container deployment
+
+From the product directory:
+
+```bash
+cd products/xhs-research-studio
+docker compose up --build
+# open http://127.0.0.1:5418
+```
+
+The included container stores projects/snapshots in the persistent `xhs_studio_data` volume.
+
 ## Product capabilities
 
 - Project model: client, category, keywords, competitors
