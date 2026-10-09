@@ -25,15 +25,19 @@ No npm install or database is required. Runtime data is written to `products/xhs
 - Snapshot diff: added/removed notes, engagement movers, emerging comment terms
 - Search visibility from `queries[].rankingPosition`
 - Search-rank diff: up/down changes, new entries, exits
+- Auto-triage: rank drops, complaint growth, fast movers, new high-signal notes, non-normal capture state
 - Comment signals: questions, complaints, purchase intent, positive feedback
 - Evidence clusters: theme → supporting comments → source notes
 - High-signal note ranking
 - Source/evidence table
 - Explicit gaps / login-required / risk-state display
 - Copyable Harvest plan for the Agent
+- Downloadable Evidence Pack JSON for downstream grounded analysis
 - Client-ready Markdown report
+- Print / Save-as-PDF client report
 - CSV evidence export
 - Built-in demo dataset
+- Agent/script-friendly CLI
 
 ## API
 
@@ -51,6 +55,23 @@ No npm install or database is required. Runtime data is written to `products/xhs
 - `GET /api/projects/:id/export.csv`
 - `GET /api/projects/:id/report?format=json`
 - `POST /api/analyze`
+
+## CLI
+
+With the server running:
+
+```bash
+node products/xhs-research-studio/cli.mjs health
+node products/xhs-research-studio/cli.mjs projects
+node products/xhs-research-studio/cli.mjs create --name "Brand Monitor" --keywords "品牌词,品类词" --competitors "A,B,C"
+node products/xhs-research-studio/cli.mjs plan PROJECT_ID
+node products/xhs-research-studio/cli.mjs ingest PROJECT_ID harvest.json
+node products/xhs-research-studio/cli.mjs diff PROJECT_ID
+node products/xhs-research-studio/cli.mjs ranks PROJECT_ID
+node products/xhs-research-studio/cli.mjs report PROJECT_ID
+```
+
+Set `XHS_STUDIO_URL` or pass `--base` to point the CLI at another Studio instance.
 
 ## Smoke test
 
