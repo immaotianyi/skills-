@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Xiaohongshu Research Data Pilot</title>
+<style>
+:root{--bg:#0b0c10;--card:#15171d;--text:#f5f7fb;--muted:#aeb5c2;--line:#2a2e38;--accent:#ff4d5a;--ok:#6ee7a8}*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#0b0c10,#11131a);color:var(--text);line-height:1.55}.wrap{max-width:1050px;margin:auto;padding:56px 24px 88px}.badge{display:inline-block;border:1px solid var(--line);padding:7px 11px;border-radius:999px;color:var(--muted);font-size:13px}.hero{padding:72px 0 44px}.hero h1{font-size:clamp(42px,7vw,78px);line-height:1.02;letter-spacing:-.055em;margin:18px 0 22px;max-width:900px}.hero p{font-size:21px;color:var(--muted);max-width:760px}.price{margin-top:32px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.price strong{font-size:32px}.cta{display:inline-block;background:var(--accent);color:white;padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:30px 0}.card{background:rgba(21,23,29,.85);border:1px solid var(--line);border-radius:16px;padding:22px}.card h3{margin:0 0 10px}.card p,.card li{color:var(--muted)}.section{padding:52px 0;border-top:1px solid var(--line)}h2{font-size:34px;letter-spacing:-.03em;margin:0 0 22px}.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}ul{padding-left:21px}.check{color:var(--ok)}pre{white-space:pre-wrap;background:#090a0d;border:1px solid var(--line);padding:18px;border-radius:12px;color:#ced5df;overflow:auto}.fine{font-size:13px;color:#7f8794}.footer{margin-top:50px;color:var(--muted)}@media(max-width:760px){.grid,.two{grid-template-columns:1fr}.hero{padding-top:42px}}
+</style>
+</head>
+<body><main class="wrap">
+<div class="hero">
+<span class="badge">7-day paid pilot · public Xiaohongshu / RedNote research</span>
+<h1>Turn Xiaohongshu research into structured evidence.</h1>
+<p>A browser-native data layer for agencies and research teams that already spend analyst time on competitor scans, keyword research, comment review, and recurring client reporting.</p>
+<div class="price"><strong>US$149 / ¥999</strong><span class="fine">Flat pilot fee · one real brief · no retainer</span></div>
+</div>
+
+<section class="section">
+<h2>Use a real client brief, not a demo.</h2>
+<div class="grid">
+<div class="card"><h3>1 category</h3><p>One live brand, client, category, market-entry or research question.</p></div>
+<div class="card"><h3>5 competitors</h3><p>Up to five agreed brands, alternatives, destinations or comparison targets.</p></div>
+<div class="card"><h3>10 search themes</h3><p>Up to ten agreed Chinese keywords, category phrases, questions or search themes.</p></div>
+</div>
+</section>
+
+<section class="section">
+<h2>What you receive</h2>
+<div class="two">
+<div class="card"><ul>
+<li><span class="check">✓</span> Structured Excel / JSON</li>
+<li><span class="check">✓</span> Relevant public notes and available comment evidence</li>
+<li><span class="check">✓</span> Creator and engagement fields where visible</li>
+<li><span class="check">✓</span> OCR text for information that exists only in media</li>
+</ul></div>
+<div class="card"><ul>
+<li><span class="check">✓</span> Recurring audience questions, objections and complaint themes</li>
+<li><span class="check">✓</span> High-signal post candidates</li>
+<li><span class="check">✓</span> Traceable source references where available</li>
+<li><span class="check">✓</span> Explicit coverage gaps and access limitations</li>
+</ul></div>
+</div>
+</section>
+
+<section class="section">
+<h2>What this is actually testing</h2>
+<p style="max-width:780px;color:var(--muted);font-size:18px">Not whether Xiaohongshu data exists. The pilot tests whether a structured evidence layer removes enough repetitive work from competitor research, keyword/category scans, comment mining and client reporting to justify using it again.</p>
+</section>
+
+<section class="section">
+<h2>Example output shape</h2>
+<pre>{
+  "source": {"platform":"xiaohongshu","capturedAt":"ISO8601"},
+  "notes": [{
+    "noteId":"...",
+    "title":"...",
+    "desc":"...",
+    "author":{"userId":"...","nickname":"..."},
+    "stats":{"likes":0,"collects":0,"comments":0,"shares":0},
+    "comments":[{"id":"...","content":"...","likes":0,"isAuthor":false}],
+    "media":{"images":[],"ocrTexts":[]}
+  }],
+  "meta":{"collected":0,"deduped":0,"gaps":[],"loginRequired":false}
+}</pre>
+</section>
+
+<section class="section">
+<h2>Good pilot questions</h2>
+<div class="grid">
+<div class="card"><h3>Competition</h3><p>“What are the visible content and comment patterns around five competing hotel brands?”</p></div>
+<div class="card"><h3>Consumer voice</h3><p>“What recurring objections and purchase questions show up around sensitive-skin sunscreen?”</p></div>
+<div class="card"><h3>Agency workflow</h3><p>“Can we cut the manual collection behind our weekly competitor report?”</p></div>
+</div>
+</section>
+
+<section class="section">
+<h2>Boundaries</h2>
+<p class="fine">Public-research workflow only. No claim of platform-wide completeness. The workflow does not bypass CAPTCHAs, login restrictions, access controls or platform safety mechanisms. Availability depends on the public evidence accessible for the agreed scope. Important limitations are reported rather than hidden.</p>
+</section>
+
+<section class="section">
+<h2>Start the pilot</h2>
+<p style="color:var(--muted)">If you received this page by email, reply with <strong style="color:white">pilot + category</strong>. You’ll receive the exact scope, required inputs, delivery format and payment details before work begins.</p>
+</section>
+
+<div class="footer">Xiaohongshu Research Data Pilot · Independent research workflow · Not affiliated with Xiaohongshu.</div>
+</main></body></html>
