@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/xhs-harvest-v2.schema.json",
+  "title": "Xiaohongshu Harvest v2",
+  "type": "object",
+  "required": ["schemaVersion", "source", "notes", "comments", "authors", "queries", "meta"],
+  "properties": {
+    "schemaVersion": {"const": "2.0"},
+    "source": {
+      "type": "object",
+      "required": ["platform", "capturedAt", "entry"],
+      "properties": {
+        "platform": {"const": "xiaohongshu"},
+        "capturedAt": {"type": "string"},
+        "entry": {"enum": ["search", "profile", "note", "shortlink", "topic", "feed", "mixed"]},
+        "keyword": {"type": "string"},
+        "sourceUrl": {"type": "string"},
+        "captureMethod": {"enum": ["initial_state", "rendered_dom", "ocr", "mixed", "unknown"]},
+        "session": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["noteId", "title", "author", "stats"],
+        "properties": {
+          "noteId": {"type": "string"}, "title": {"type": "string"}, "desc": {"type": "string"},
+          "type": {"type": "string"}, "publishTime": {}, "lastUpdateTime": {}, "ipLocation": {"type": "string"},
+          "tags": {"type": "array"}, "atUsers": {"type": "array"}, "authorStatement": {"type": "string"},
+          "author": {"type": "object"}, "stats": {"type": "object"}, "media": {"type": "object"},
+          "sourceUrl": {"type": "string"}, "captureMethod": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "id": {"type": "string"}, "noteId": {"type": "string"}, "parentCommentId": {"type": "string"},
+          "content": {"type": "string"}, "likes": {"type": "number"}, "isAuthor": {"type": "boolean"},
+          "user": {"type": ["string", "object"]}, "publishedAt": {}, "sourceUrl": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "authors": {"type": "array"},
+    "queries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["keyword"],
+        "properties": {
+          "keyword": {"type": "string"}, "capturedAt": {"type": "string"},
+          "results": {"type": "array", "items": {"type": "object", "properties": {"noteId": {"type": "string"}, "rankingPosition": {"type": "integer", "minimum": 1}, "sourceUrl": {"type": "string"}}, "additionalProperties": true}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["gaps", "loginRequired", "riskState"],
+      "properties": {
+        "collected": {"type": "integer"}, "deduped": {"type": "integer"}, "gaps": {"type": "array"},
+        "loginRequired": {"type": "boolean"},
+        "riskState": {"enum": ["NORMAL", "THROTTLED", "LOGIN_REQUIRED", "CAPTCHA", "ACCESS_DENIED", "BLOCKED"]},
+        "sampleBudget": {"type": "integer"}, "stoppedBecause": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
