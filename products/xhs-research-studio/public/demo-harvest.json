@@ -1,10 +1,21 @@
 {
+  "schemaVersion": "2.0",
   "source": {"platform":"xiaohongshu","capturedAt":"2026-10-09T16:00:00Z","entry":"search","keyword":"敏感肌防晒","sourceUrl":"https://www.xiaohongshu.com/search_result?keyword=%E6%95%8F%E6%84%9F%E8%82%8C%E9%98%B2%E6%99%92","captureMethod":"initial_state"},
   "notes": [
     {"noteId":"demo1","title":"夏天通勤防晒实测","desc":"敏感肌，重点看辣眼和搓泥","author":{"userId":"u1","nickname":"油敏皮小周"},"stats":{"likes":3280,"collects":1900,"comments":286,"shares":160},"tags":["敏感肌","防晒","通勤"],"sourceUrl":"https://www.xiaohongshu.com/explore/demo1","comments":[{"id":"c1","content":"出汗以后会辣眼睛吗？我最怕这个","likes":88,"user":"Nana"},{"id":"c2","content":"我用了两周不刺痛，但是上妆会有点搓泥","likes":45,"user":"Mia"},{"id":"c3","content":"多少钱，哪里买靠谱？求链接","likes":31,"user":"KK"}]},
     {"noteId":"demo2","title":"三款敏感肌防晒对比","desc":"肤感、眼周、后续上妆","author":{"userId":"u2","nickname":"成分研究所"},"stats":{"likes":5220,"collects":4100,"comments":402,"shares":300},"tags":["防晒测评","敏感肌"],"sourceUrl":"https://www.xiaohongshu.com/explore/demo2","comments":[{"id":"c4","content":"B品牌真的太贵了，有没有平替？","likes":103,"user":"小鱼"},{"id":"c5","content":"A品牌回购三次了，眼睛不刺痛，通勤很好用","likes":90,"user":"Vivian"},{"id":"c6","content":"油皮适合哪款？夏天会不会闷痘","likes":60,"user":"YC"}]},
     {"noteId":"demo3","title":"防晒搓泥到底是谁的问题","desc":"妆前与防晒组合测试","author":{"userId":"u3","nickname":"底妆实验室"},"stats":{"likes":2100,"collects":2300,"comments":198,"shares":120},"tags":["搓泥","妆前","防晒"],"sourceUrl":"https://www.xiaohongshu.com/explore/demo3","comments":[{"id":"c7","content":"用了C品牌直接搓泥翻车，和粉底完全打架","likes":77,"user":"Q"},{"id":"c8","content":"有没有不搓泥又不辣眼的？敏感肌真的难选","likes":69,"user":"阿布"}]}
   ],
+  "comments": [],
   "authors": [],
+  "queries": [
+    {"keyword":"敏感肌防晒","capturedAt":"2026-10-09T16:00:00Z","results":[
+      {"noteId":"demo2","rankingPosition":2,"title":"三款敏感肌防晒对比","author":"成分研究所","sourceUrl":"https://www.xiaohongshu.com/explore/demo2"},
+      {"noteId":"demo1","rankingPosition":5,"title":"夏天通勤防晒实测","author":"油敏皮小周","sourceUrl":"https://www.xiaohongshu.com/explore/demo1"}
+    ]},
+    {"keyword":"防晒搓泥","capturedAt":"2026-10-09T16:00:00Z","results":[
+      {"noteId":"demo3","rankingPosition":1,"title":"防晒搓泥到底是谁的问题","author":"底妆实验室","sourceUrl":"https://www.xiaohongshu.com/explore/demo3"}
+    ]}
+  ],
   "meta": {"collected":3,"deduped":3,"gaps":["Demo dataset; not a live platform sample"],"loginRequired":false,"riskState":"NORMAL"}
 }
