@@ -1,0 +1,11 @@
+services:
+  xhs-research-studio:
+    build: .
+    ports:
+      - "5418:5418"
+    volumes:
+      - xhs_studio_data:/data
+    restart: unless-stopped
+
+volumes:
+  xhs_studio_data:
