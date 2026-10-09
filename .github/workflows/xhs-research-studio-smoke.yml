@@ -29,5 +29,6 @@ jobs:
           node --check products/xhs-research-studio/server.mjs
           node --check products/xhs-research-studio/server-v2.mjs
           node --check products/xhs-research-studio/public/app.js
+          node --check products/xhs-research-studio/cli.mjs
       - name: End-to-end smoke test
         run: node products/xhs-research-studio/smoke-test.mjs
