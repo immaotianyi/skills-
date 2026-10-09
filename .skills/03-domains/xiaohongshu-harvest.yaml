@@ -1,0 +1,167 @@
+id: xiaohongshu-harvest
+name: Xiaohongshu Harvest v2
+description: Turn authorized/public Xiaohongshu pages into source-traceable Harvest v2 JSON for extraction, monitoring and research.
+type: prompt
+tags:
+  - xiaohongshu
+  - research
+  - data
+  - browser
+  - ocr
+  - monitoring
+prompt: |
+  # Xiaohongshu Harvest v2
+
+  把小红书公开/已授权可见页面稳定地转成可追溯、可做快照、可进入 Research Studio 的结构化数据。
+
+  核心路线：浏览器 → window.__INITIAL_STATE__ → DOM 兜底 → OCR 仅用于图片/视频画面文字。
+
+  ## 1. 任务模式
+
+  收到任务后先归类：
+
+  - extract：单条笔记 / 指定作者 / 指定字段 → 精确结构化。
+  - corpus：关键词 / 话题 / 垂直领域 → 建立去重后的 notes + comments corpus。
+  - monitor：与历史快照对比 → 记录新笔记、互动变化、搜索排名变化、评论新增与缺口。
+  - research：围绕商业问题做 progressive sampling；先小样本，信息未饱和才扩大。
+
+  不要把“研究”默认解释成“全量抓取”。优先用最少访问得到足够证据。
+
+  ## 2. 第一动作：门禁 + 风险状态
+
+  - NORMAL：页面正常，可继续。
+  - THROTTLED：加载/失败明显异常，降低任务强度并记录 gap。
+  - LOGIN_REQUIRED：出现“登录后查看/登录后推荐”等门禁；立即上报，不得当作无结果。
+  - CAPTCHA：出现人机验证；停止自动任务，交给用户人工处理。
+  - ACCESS_DENIED / BLOCKED：停止该 session，不自动换账号/IP继续。
+
+  边界：只处理公开或用户已授权可见内容；不绕过登录、验证码、访问控制或平台风控；不做自动点赞/评论/关注/发布。
+
+  ## 3. 数据优先级
+
+  1. window.__INITIAL_STATE__ 状态树。
+  2. 渲染 DOM：只补状态树缺失字段和真实页面链接。
+  3. 截图 + OCR：只处理图片/视频画面中的文字。
+
+  水合前 DOM/状态树可能为空：等待 3–4 秒后再读取。
+
+  复杂状态树只在页面内 JSON.stringify(...)，回到执行沙箱后循环 JSON.parse 到对象为止。
+
+  Vue ref（如 user.userPageData、user.notes）读取 ._value。
+
+  ## 4. 已验证字段地图
+
+  ### 笔记详情
+  __INITIAL_STATE__.note.noteDetailMap[<noteId>]
+
+  核心：noteId, title, desc, type, time, lastUpdateTime, ipLocation, tagList, atUserList, imageList, video, user, interactInfo, noteStatement, shareInfo, xsecToken。
+
+  ### 评论
+  noteDetailMap[<noteId>].comments
+
+  核心：list[], cursor, hasMore, loading, firstRequestFinish。
+
+  评论结构：id, content, likeCount, subComments[], subCommentCursor, noteId, showTags[], userInfo；showTags 包含 is_author 时标记作者本人。
+
+  ### 作者
+  __INITIAL_STATE__.user.userPageData._value
+
+  核心：basicInfo, interactions, tags, posted, liked, collected。
+
+  ### 搜索 / feed
+  __INITIAL_STATE__.search / __INITIAL_STATE__.feed
+
+  卡片至少提取：noteId, xsecToken, type, displayTitle, cover, interactInfo, user, time。
+
+  v2 必须额外记录当前 keyword 下的 rankingPosition（从 1 开始）和 capturedAt。
+
+  ## 5. Progressive sampling
+
+  research/corpus 模式默认：
+
+  1. 先取 20–50 条候选。
+  2. 去重并检查新增主题/问题是否仍在增长。
+  3. 只有新信息仍显著时才扩到 100–200。
+  4. 达到样本预算或新增主题趋于饱和即停止。
+
+  停止原因写入 meta.stoppedBecause，样本预算写 meta.sampleBudget。
+
+  ## 6. 来源与证据链
+
+  每条 note/comment/query 尽量保留：sourceUrl、capturedAt、captureMethod、confidence。
+
+  captureMethod 取 initial_state | rendered_dom | ocr | mixed | unknown。
+
+  confidence 为 0..1；状态树直接字段通常高于 OCR 推断。
+
+  任何研究结论必须能回到原始 note/comment/source URL；没有来源的推断不得伪装成抓取事实。
+
+  ## 7. Comments 升为一级对象
+
+  v2 输出可以在 note 内保留 comments 兼容旧消费者，但必须在根级 comments[] 再输出一次去重后的评论：
+
+  id, noteId, parentCommentId, content, likes, user, isAuthor, publishedAt, sourceUrl。
+
+  去重优先 comment.id；缺 id 时使用 noteId + user + content 组合键。
+
+  ## 8. Snapshot / Monitor
+
+  监控任务每次生成独立 snapshot，不覆盖旧数据。
+
+  同一 note 在两次快照之间至少可比较：
+
+  - likes / collects / comments / shares delta
+  - 是否新出现 / 不再可见
+  - 搜索 rankingPosition delta
+  - 新评论 / 新作者回复
+
+  Skill 不负责长期数据库，只需产出带 source.capturedAt 的 v2 JSON，交给 XHS Research Studio 保存和 diff。
+
+  ## 9. Harvest v2 输出
+
+  输出根对象：
+
+  - schemaVersion: "2.0"
+  - source: platform, capturedAt, entry, keyword, sourceUrl, captureMethod
+  - notes[]: noteId, title, desc, type, publishTime, lastUpdateTime, ipLocation, tags, atUsers, authorStatement, author, stats, media, sourceUrl, captureMethod, confidence
+  - comments[]: id, noteId, parentCommentId, content, likes, user, isAuthor, publishedAt, sourceUrl
+  - authors[]
+  - queries[]: keyword, capturedAt, results[{noteId, rankingPosition, sourceUrl}]
+  - meta: collected, deduped, gaps, loginRequired, riskState, sampleBudget, stoppedBecause
+
+  ## 10. URL / 登录规则
+
+  - 分享短链 xhslink.cn/o/<code>：可解析到真实笔记地址和 token。
+  - 笔记详情 /explore/<noteId>?xsec_token=...：有效 token 时通常可免登录。
+  - 作者主页 /user/profile/<userId>?xsec_token=...：基本信息可能可见；列表/深层访问视登录态。
+  - 搜索 /search_result?keyword=<kw>&source=web_explore_feed：登录门禁时立即标记 LOGIN_REQUIRED。
+  - 话题 /page/topics/<topicId>：按页面实际门禁处理。
+
+  ## 11. OCR
+
+  图片/视频画面文字才走 OCR。视频源常为 blob:（MSE），不要把 blob 当可下载源；定时截图抽帧后离线 OCR。
+
+  OCR 文本进入 media.ocrTexts[]，并标记 captureMethod=ocr 或 mixed；不要用 OCR 覆盖状态树已存在的确定字段。
+
+  ## 12. 自检
+
+  - 不是门禁页/验证码页被误判成无结果。
+  - 状态树优先。
+  - noteId / comment.id 去重。
+  - 搜索结果记录 keyword + rankingPosition。
+  - comments 已有根级一级对象。
+  - sourceUrl / capturedAt / captureMethod 尽量完整。
+  - hasMore 未跑完时明确写 gap。
+  - OCR 只作为兜底。
+  - meta.riskState 与 meta.gaps 已填写。
+  - 输出符合 Harvest v2；兼容旧 v1 输入时，不伪造不存在字段。
+
+  ## 13. Research Studio handoff
+
+  当用户要持续监控、竞品周报、评论洞察、历史变化或客户报告时：
+
+  1. 完成 Harvest v2。
+  2. 将 JSON 导入 XHS Research Studio。
+  3. Studio 负责 snapshot history、diff、评论信号、Top notes、证据表、CSV 和 Markdown report。
+
+  Skill 负责可靠地读；Studio 负责长期地理解和交付。
