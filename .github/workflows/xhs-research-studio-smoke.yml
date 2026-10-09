@@ -1,0 +1,33 @@
+name: XHS Research Studio Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'products/xhs-research-studio/**'
+      - '.skills/03-domains/xiaohongshu-harvest.yaml'
+      - '.github/workflows/xhs-research-studio-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'products/xhs-research-studio/**'
+      - '.skills/03-domains/xiaohongshu-harvest.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: |
+          node --check products/xhs-research-studio/server.mjs
+          node --check products/xhs-research-studio/server-v2.mjs
+          node --check products/xhs-research-studio/public/app.js
+      - name: End-to-end smoke test
+        run: node products/xhs-research-studio/smoke-test.mjs
