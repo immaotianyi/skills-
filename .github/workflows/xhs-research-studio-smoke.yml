@@ -30,6 +30,7 @@ jobs:
         run: |
           node --check products/xhs-research-studio/server.mjs
           node --check products/xhs-research-studio/server-v2.mjs
+          node --check products/xhs-research-studio/server-v3.mjs
           node --check products/xhs-research-studio/public/app.js
           node --check products/xhs-research-studio/public/runs-ui.js
           node --check products/xhs-research-studio/public/pack-v12.js
@@ -49,6 +50,10 @@ jobs:
           node --check products/xhs-research-studio/lib/schedules.mjs
           node --check products/xhs-research-studio/lib/run-service.mjs
           node --check products/xhs-research-studio/lib/run-http.mjs
+          node --check products/xhs-research-studio/lib/hosted-db.mjs
+          node --check products/xhs-research-studio/lib/hosted-policy.mjs
+          node --check products/xhs-research-studio/lib/billing.mjs
+          node --check products/xhs-research-studio/lib/hosted-http.mjs
           node --check products/xhs-research-studio/smoke-test.mjs
       - name: Core unit, security, compatibility, and scale tests
         run: node --test products/xhs-research-studio/test/*.test.mjs
