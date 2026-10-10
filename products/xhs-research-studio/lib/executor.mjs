@@ -82,11 +82,12 @@ function normalizeProtocol(value){
   return {status:'completed',harvest:value.harvest};
 }
 
-export async function runConfiguredExecutor(project,run,{timeoutMs,maxOutputBytes=20_000_000}={}){
+export async function runConfiguredExecutor(project,run,{timeoutMs,maxOutputBytes=20_000_000,signal}={}){
   const command=String(process.env.XHS_STUDIO_HARVEST_EXECUTOR||'').trim();
   if(!command){
     return {status:'manual_action_required',reason:'No Harvest executor is configured on this Studio instance.',riskState:'EXECUTOR_NOT_CONFIGURED',gaps:['Configure XHS_STUDIO_HARVEST_EXECUTOR or use the existing authorized manual ingest flow.']};
   }
+  if(signal?.aborted)throw new ExecutorError('Harvest executor run was cancelled before start.',{code:'EXECUTOR_CANCELLED'});
   const args=parseArgs();
   const timeout=Number.isFinite(Number(timeoutMs))?Math.max(1,Number(timeoutMs)):Math.max(15_000,(run?.budget?.maxSeconds||300)*1000);
   const outputLimit=Math.max(1_024,Number(maxOutputBytes)||20_000_000);
@@ -95,12 +96,21 @@ export async function runConfiguredExecutor(project,run,{timeoutMs,maxOutputByte
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,{shell:false,stdio:['pipe','pipe','pipe'],env:executorEnv(),windowsHide:true});
     let stdout=[];let stderr=[];let stdoutBytes=0;let stderrBytes=0;let settled=false;
-    const finish=(fn,value)=>{if(settled)return;settled=true;clearTimeout(timer);fn(value)};
+    const onAbort=()=>{
+      child.kill('SIGKILL');
+      fail('Harvest executor run was cancelled.','EXECUTOR_CANCELLED');
+    };
+    const cleanup=()=>{
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort',onAbort);
+    };
+    const finish=(fn,value)=>{if(settled)return;settled=true;cleanup();fn(value)};
     const fail=(message,code='EXECUTOR_ERROR')=>finish(reject,new ExecutorError(message,{code}));
     const timer=setTimeout(()=>{
       child.kill('SIGKILL');
       fail(`Harvest executor exceeded ${timeout} ms timeout.`,'EXECUTOR_TIMEOUT');
     },timeout);
+    signal?.addEventListener?.('abort',onAbort,{once:true});
 
     child.on('error',err=>fail(`Failed to start Harvest executor: ${err.message}`,'EXECUTOR_START'));
     child.stdout.on('data',chunk=>{
