@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { normalizeRunBudget } from './runs.mjs';
 
 const SAFE_ID_RE=/^[A-Za-z0-9._-]+$/u;
 const queues=new Map();
@@ -13,7 +14,7 @@ function makeId(){return `sch_${Date.now().toString(36)}_${crypto.randomBytes(4)
 
 async function readJson(file,fallback){
   try{return JSON.parse(await fs.readFile(file,'utf8'))}
-  catch(err){if(err?.code==='ENOENT')return fallback;if(err instanceof SyntaxError)throw new Error(`Corrupt JSON storage file: ${file}: ${err.message}`);throw err}
+  catch(err){if(err?.code==='ENOENT')return fallback;if(err instanceof SyntaxError)throw new Error(`Corrupt schedules.json: ${err.message}`);throw err}
 }
 async function writeAtomic(file,data){
   await fs.mkdir(path.dirname(file),{recursive:true});
@@ -53,11 +54,7 @@ export async function createSchedule(dataDir,projectId,{intervalMinutes:interval
   const first=startAt?iso(startAt):new Date(Date.now()+minutes*60_000).toISOString();
   const row={
     id:makeId(),projectId,enabled:Boolean(enabled),intervalMinutes:minutes,nextRunAt:first,
-    budget:{
-      maxNotes:Math.min(500,Math.max(1,Math.trunc(Number(budget.maxNotes)||80))),
-      maxComments:Math.min(20_000,Math.max(0,Math.trunc(Number(budget.maxComments)||2_000))),
-      maxSeconds:Math.min(1_800,Math.max(15,Math.trunc(Number(budget.maxSeconds)||300))),
-    },
+    budget:normalizeRunBudget(budget),
     createdAt:now,updatedAt:now,lastClaimedAt:null,lastRunAt:null,lastRunId:null,lastRunState:null,lastError:null,
   };
   return mutate(dataDir,rows=>{rows.push(row);return row});
@@ -71,14 +68,7 @@ export async function updateSchedule(dataDir,scheduleId,patch={}){
     if('enabled'in patch)next.enabled=Boolean(patch.enabled);
     if('intervalMinutes'in patch)next.intervalMinutes=intervalMinutes(patch.intervalMinutes);
     if('nextRunAt'in patch)next.nextRunAt=iso(patch.nextRunAt);
-    if('budget'in patch){
-      const budget=patch.budget||{};
-      next.budget={
-        maxNotes:Math.min(500,Math.max(1,Math.trunc(Number(budget.maxNotes??current.budget.maxNotes)||80))),
-        maxComments:Math.min(20_000,Math.max(0,Math.trunc(Number(budget.maxComments??current.budget.maxComments)||0))),
-        maxSeconds:Math.min(1_800,Math.max(15,Math.trunc(Number(budget.maxSeconds??current.budget.maxSeconds)||300))),
-      };
-    }
+    if('budget'in patch)next.budget=normalizeRunBudget({...current.budget,...(patch.budget||{})});
     next.updatedAt=new Date().toISOString();rows[index]=next;return next;
   });
 }
