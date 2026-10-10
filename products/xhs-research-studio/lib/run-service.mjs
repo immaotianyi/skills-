@@ -21,12 +21,21 @@ export class RunService{
     this.dataDir=dataDir;
     this.activeByProject=new Map();
     this.abortByProject=new Map();
+    this.launchingProjects=new Set();
     this.timer=null;
     const configured=Number(schedulerTickMs??process.env.XHS_STUDIO_SCHEDULER_TICK_MS??30_000);
     this.schedulerTickMs=Number.isFinite(configured)?Math.max(250,Math.min(300_000,configured)):30_000;
   }
 
-  status(){return {executorConfigured:executorConfigured(),schedulerTickMs:this.schedulerTickMs,activeProjects:[...this.activeByProject.keys()]}}
+  #busy(projectId){return this.launchingProjects.has(projectId)||this.activeByProject.has(projectId)}
+
+  status(){
+    return {
+      executorConfigured:executorConfigured(),
+      schedulerTickMs:this.schedulerTickMs,
+      activeProjects:[...new Set([...this.launchingProjects,...this.activeByProject.keys()])],
+    };
+  }
 
   async runs(projectId){return listRuns(this.dataDir,projectId)}
   async run(projectId,runId){return getRun(this.dataDir,projectId,runId)}
@@ -36,17 +45,29 @@ export class RunService{
   async updateSchedule(scheduleId,patch){return updateSchedule(this.dataDir,scheduleId,patch)}
 
   async launch(project,{budget={},trigger='manual',scheduleId=null}={}){
-    if(this.activeByProject.has(project.id))throw new RunServiceError(409,'A Harvest run is already active for this project.','RUN_BUSY');
-    const run=await createRun(this.dataDir,project,{budget,trigger,scheduleId});
-    this.execute(project,run).catch(()=>{});
-    return run;
+    if(this.#busy(project.id))throw new RunServiceError(409,'A Harvest run is already active or launching for this project.','RUN_BUSY');
+    // Reserve synchronously before the first await. Without this, two concurrent HTTP
+    // requests can both observe an idle project and create two queued runs.
+    this.launchingProjects.add(project.id);
+    try{
+      const run=await createRun(this.dataDir,project,{budget,trigger,scheduleId});
+      this.execute(project,run).catch(()=>{});
+      return run;
+    }finally{
+      this.launchingProjects.delete(project.id);
+    }
   }
 
   async resume(project,runId){
-    if(this.activeByProject.has(project.id))throw new RunServiceError(409,'A Harvest run is already active for this project.','RUN_BUSY');
-    const queued=await requeueRun(this.dataDir,project.id,runId);
-    this.execute(project,queued).catch(()=>{});
-    return queued;
+    if(this.#busy(project.id))throw new RunServiceError(409,'A Harvest run is already active or launching for this project.','RUN_BUSY');
+    this.launchingProjects.add(project.id);
+    try{
+      const queued=await requeueRun(this.dataDir,project.id,runId);
+      this.execute(project,queued).catch(()=>{});
+      return queued;
+    }finally{
+      this.launchingProjects.delete(project.id);
+    }
   }
 
   async cancel(project,runId){
@@ -149,8 +170,8 @@ export class RunService{
         await recordScheduleRun(this.dataDir,schedule.id,{state:'disabled_missing_project',error:'Project no longer exists.'});
         continue;
       }
-      if(this.activeByProject.has(project.id)){
-        await recordScheduleRun(this.dataDir,schedule.id,{state:'skipped_overlap',error:'Previous project run is still active.'});
+      if(this.#busy(project.id)){
+        await recordScheduleRun(this.dataDir,schedule.id,{state:'skipped_overlap',error:'Previous project run is still active or launching.'});
         continue;
       }
       try{
