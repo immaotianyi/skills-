@@ -53,7 +53,9 @@ try{
 
   const project=(await call('/api/projects',{method:'POST',cookie:ownerCookie,workspaceId,body:{name:'Hosted Smoke Research',category:'防晒',keywords:['敏感肌防晒']},status:201})).data;
   const analystReg=await call('/api/auth/register',{method:'POST',body:{email:'analyst-smoke@example.test',password:testPassword,workspaceName:'Analyst'},status:201});
-  const analystCookie=cookieOf(analystReg.response);
+  const analystCookie=cookieOf(analystReg.response),analystWorkspaceId=analystReg.data.workspace.id;
+  await call(`/api/projects/${project.id}`,{cookie:analystCookie,workspaceId:analystWorkspaceId,status:404});
+
   const invitation=(await call(`/api/workspaces/${workspaceId}/invitations`,{method:'POST',cookie:ownerCookie,workspaceId,body:{email:'analyst-smoke@example.test',role:'analyst'},status:201})).data.invitation;
   const token=new URL(invitation.url).searchParams.get('invite');assert(token,'invite token missing');
   await call('/api/invitations/accept',{method:'POST',cookie:analystCookie,body:{token}});
@@ -65,13 +67,20 @@ try{
 
   const synthesis=(await call(`/api/projects/${project.id}/synthesis`,{method:'POST',cookie:analystCookie,workspaceId,body:{}})).data.synthesis;
   assert(synthesis.grounding?.validated===true&&synthesis.claims.every(c=>c.evidenceIds.length),'synthesis not grounded');
-  const share=(await call(`/api/workspaces/${workspaceId}/shares`,{method:'POST',cookie:analystCookie,workspaceId,body:{projectId:project.id},status:201})).data.share;
+  const share=(await call(`/api/workspaces/${workspaceId}/shares`,{method:'POST',cookie:analystCookie,workspaceId,body:{projectId:project.id,ttlSeconds:0},status:201})).data.share;
+  const shareExpiry=Date.parse(share.expiresAt||'');
+  assert(Number.isFinite(shareExpiry)&&shareExpiry>Date.now(),'share must always have a future expiry');
+  assert(shareExpiry-Date.now()<=30*24*3600*1000+10_000,'share lifetime must not exceed 30 days');
   const publicReport=await fetch(share.url);assert(publicReport.status===200&&(await publicReport.text()).includes('Hosted Smoke Research'),'share failed');
 
   const members=(await call(`/api/workspaces/${workspaceId}/members`,{cookie:ownerCookie,workspaceId})).data.members,analyst=members.find(m=>m.email==='analyst-smoke@example.test');
+  const ownerEscalation=await call(`/api/workspaces/${workspaceId}/members/${analyst.id}`,{method:'PATCH',cookie:ownerCookie,workspaceId,body:{role:'owner'},status:409});
+  assert(ownerEscalation.data.code==='OWNER_TRANSFER_REQUIRED','generic member endpoint must not grant workspace ownership');
   await call(`/api/workspaces/${workspaceId}/members/${analyst.id}`,{method:'PATCH',cookie:ownerCookie,workspaceId,body:{role:'viewer'}});
   await call(`/api/projects/${project.id}/synthesis`,{method:'POST',cookie:analystCookie,workspaceId,body:{},status:403});
-  console.log(JSON.stringify({ok:true,workspaceId,projectId:project.id,runId:run.id,snapshotId:run.snapshotId,usage,synthesisClaims:synthesis.claims.length,shareId:share.id,duplicateCheckoutBlocked:true},null,2));
+  await call(`/api/projects/${project.id}/runs`,{method:'POST',cookie:analystCookie,workspaceId,body:{budget:{maxNotes:1,maxComments:1,maxSeconds:30}},status:403});
+
+  console.log(JSON.stringify({ok:true,workspaceId,projectId:project.id,runId:run.id,snapshotId:run.snapshotId,usage,synthesisClaims:synthesis.claims.length,shareId:share.id,shareExpiresAt:share.expiresAt,duplicateCheckoutBlocked:true,crossWorkspaceHidden:true,ownerEscalationBlocked:true,viewerWritesBlocked:true},null,2));
 }catch(error){
   failure=error;
   console.error(error.stack||error);
