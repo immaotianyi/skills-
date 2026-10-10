@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +15,45 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const snapshotKey='api-v12-snapshot-integrity-key-at-least-32-bytes-2026';
 const packKey='api-v12-pack-integrity-key-at-least-32-bytes-2026';
 
-async function waitForHealth(base){
-  for(let i=0;i<80;i++){
-    try{const r=await fetch(`${base}/api/health`);if(r.ok)return}catch{}
+async function getFreePort(){
+  return new Promise((resolve,reject)=>{
+    const probe=net.createServer();
+    probe.unref();
+    probe.once('error',reject);
+    probe.listen(0,'127.0.0.1',()=>{
+      const address=probe.address();
+      const port=typeof address==='object'&&address?address.port:0;
+      probe.close(error=>error?reject(error):resolve(port));
+    });
+  });
+}
+
+async function waitForHealth(base,child,diagnostic){
+  const deadline=Date.now()+10_000;
+  let lastError=null;
+  while(Date.now()<deadline){
+    if(child.exitCode!==null||child.signalCode!==null){
+      throw new Error(`server exited before becoming healthy (exit=${child.exitCode}, signal=${child.signalCode})\n${diagnostic()}`);
+    }
+    try{
+      const response=await fetch(`${base}/api/health`);
+      if(response.ok)return;
+      lastError=new Error(`health returned HTTP ${response.status}`);
+    }catch(error){lastError=error}
     await sleep(50);
   }
-  throw new Error('server did not become healthy');
+  throw new Error(`server did not become healthy within 10s${lastError?`: ${lastError.message}`:''}\n${diagnostic()}`);
+}
+
+async function terminate(child){
+  if(child.exitCode!==null||child.signalCode!==null)return;
+  const exited=new Promise(resolve=>child.once('exit',resolve));
+  child.kill('SIGTERM');
+  await Promise.race([exited,sleep(1500)]);
+  if(child.exitCode===null&&child.signalCode===null){
+    child.kill('SIGKILL');
+    await Promise.race([exited,sleep(1500)]);
+  }
 }
 
 async function createProjectAndIngest(base){
@@ -38,22 +72,26 @@ async function createProjectAndIngest(base){
 
 async function runServer(env,fn){
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-pack-api-v12-'));
-  const port=57000+Math.floor(Math.random()*500);
+  const port=await getFreePort();
   const base=`http://127.0.0.1:${port}`;
   const child=spawn(process.execPath,[serverPath],{
-    env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir,...env},
+    env:{...process.env,PORT:String(port),HOST:'127.0.0.1',XHS_STUDIO_DATA:dataDir,...env},
     stdio:['ignore','pipe','pipe'],
   });
+  let logs='';
+  const capture=chunk=>{logs=(logs+chunk.toString()).slice(-12_000)};
+  child.stdout.on('data',capture);
+  child.stderr.on('data',capture);
   try{
-    await waitForHealth(base);
+    await waitForHealth(base,child,()=>logs);
     await fn(base);
   } finally {
-    child.kill('SIGTERM');
-    await fs.rm(dataDir,{recursive:true,force:true});
+    await terminate(child);
+    await fs.rm(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100});
   }
 }
 
-test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 with explicit negotiation',{timeout:20000},async()=>{
+test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 with explicit negotiation',{timeout:30000},async()=>{
   await runServer({
     XHS_STUDIO_INTEGRITY_KEY:snapshotKey,
     XHS_STUDIO_INTEGRITY_KEY_ID:'snapshot-api-v1',
@@ -90,7 +128,7 @@ test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 
   });
 });
 
-test('HTTP v1.2 authenticated mode fails closed when snapshot or pack authentication is unavailable',{timeout:20000},async()=>{
+test('HTTP v1.2 authenticated mode fails closed when snapshot or pack authentication is unavailable',{timeout:30000},async()=>{
   await runServer({},async base=>{
     const {project}=await createProjectAndIngest(base);
     const response=await fetch(`${base}/api/projects/${project.id}/evidence-pack?version=1.2&requireAuthenticated=1`);
