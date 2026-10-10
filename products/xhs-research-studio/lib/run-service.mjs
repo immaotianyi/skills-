@@ -20,6 +20,7 @@ export class RunService{
   constructor(dataDir,{schedulerTickMs}={}){
     this.dataDir=dataDir;
     this.activeByProject=new Map();
+    this.abortByProject=new Map();
     this.timer=null;
     const configured=Number(schedulerTickMs??process.env.XHS_STUDIO_SCHEDULER_TICK_MS??30_000);
     this.schedulerTickMs=Number.isFinite(configured)?Math.max(250,Math.min(300_000,configured)):30_000;
@@ -48,18 +49,40 @@ export class RunService{
     return queued;
   }
 
-  async execute(project,run){
-    if(this.activeByProject.has(project.id))throw new RunServiceError(409,'A Harvest run is already active for this project.','RUN_BUSY');
-    const task=this.#execute(project,run);
-    this.activeByProject.set(project.id,task);
-    try{return await task}finally{if(this.activeByProject.get(project.id)===task)this.activeByProject.delete(project.id)}
+  async cancel(project,runId){
+    const current=await getRun(this.dataDir,project.id,runId);
+    if(!current)throw new RunServiceError(404,'run not found','RUN_NOT_FOUND');
+    if([RUN_STATES.COMPLETED,RUN_STATES.CANCELLED].includes(current.state)){
+      throw new RunServiceError(409,`Run cannot be cancelled from ${current.state}.`,'RUN_NOT_CANCELLABLE');
+    }
+    const active=this.abortByProject.get(project.id);
+    if(active?.runId===runId)active.controller.abort();
+    try{
+      return await transitionRun(this.dataDir,project.id,runId,RUN_STATES.CANCELLED,{stoppedBecause:'Cancelled by operator.'});
+    }catch(error){
+      throw new RunServiceError(409,error.message,'RUN_NOT_CANCELLABLE');
+    }
   }
 
-  async #execute(project,run){
+  async execute(project,run){
+    if(this.activeByProject.has(project.id))throw new RunServiceError(409,'A Harvest run is already active for this project.','RUN_BUSY');
+    const controller=new AbortController();
+    const task=this.#execute(project,run,{signal:controller.signal});
+    this.activeByProject.set(project.id,task);
+    this.abortByProject.set(project.id,{runId:run.id,controller});
+    try{return await task}finally{
+      if(this.activeByProject.get(project.id)===task)this.activeByProject.delete(project.id);
+      if(this.abortByProject.get(project.id)?.runId===run.id)this.abortByProject.delete(project.id);
+    }
+  }
+
+  async #execute(project,run,{signal}={}){
     let current=await transitionRun(this.dataDir,project.id,run.id,RUN_STATES.RUNNING);
     if(current.scheduleId)await recordScheduleRun(this.dataDir,current.scheduleId,{runId:current.id,state:current.state});
     try{
-      const result=await runConfiguredExecutor(project,current,{timeoutMs:current.budget.maxSeconds*1000});
+      const result=await runConfiguredExecutor(project,current,{timeoutMs:current.budget.maxSeconds*1000,signal});
+      const latestAfterExecutor=await getRun(this.dataDir,project.id,current.id);
+      if(latestAfterExecutor?.state===RUN_STATES.CANCELLED)return latestAfterExecutor;
       if(result.status==='manual_action_required'){
         current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.MANUAL_ACTION_REQUIRED,{
           riskState:result.riskState||'BLOCKED',gaps:result.gaps||[],stoppedBecause:result.reason||'Manual action required.',
@@ -86,6 +109,8 @@ export class RunService{
           attention=[];
         }
       }
+      const latestBeforeComplete=await getRun(this.dataDir,project.id,current.id);
+      if(latestBeforeComplete?.state===RUN_STATES.CANCELLED)return latestBeforeComplete;
       current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.COMPLETED,{
         snapshotId:snapshot.id,
         riskState:snapshot.harvest?.meta?.riskState||'NORMAL',
@@ -97,6 +122,11 @@ export class RunService{
       if(current.scheduleId)await recordScheduleRun(this.dataDir,current.scheduleId,{runId:current.id,state:current.state});
       return current;
     }catch(error){
+      const latest=await getRun(this.dataDir,project.id,current.id).catch(()=>null);
+      if(latest?.state===RUN_STATES.CANCELLED){
+        if(latest.scheduleId)await recordScheduleRun(this.dataDir,latest.scheduleId,{runId:latest.id,state:latest.state}).catch(()=>{});
+        return latest;
+      }
       try{
         current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.FAILED,{error:{code:error.code||'RUN_FAILED',message:error.message||String(error)}});
       }catch{}
@@ -151,5 +181,8 @@ export class RunService{
     this.timer.unref?.();
   }
 
-  stop(){if(this.timer){clearInterval(this.timer);this.timer=null}}
+  stop(){
+    if(this.timer){clearInterval(this.timer);this.timer=null}
+    for(const active of this.abortByProject.values())active.controller.abort();
+  }
 }
