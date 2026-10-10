@@ -19,10 +19,49 @@ function assertSafeId(value, label='id') {
   if (!SAFE_ID_RE.test(String(value || ''))) throw new HarvestValidationError(`Invalid ${label}.`, [{path:label,message:'Only letters, numbers, dot, underscore and dash are allowed.'}], 400);
 }
 
-function integrityOptions() {
-  const key=String(process.env.XHS_STUDIO_INTEGRITY_KEY||'');
-  if(key && Buffer.byteLength(key,'utf8')<32) throw new IntegrityError('XHS_STUDIO_INTEGRITY_KEY must be at least 32 UTF-8 bytes.',[{path:'environment.XHS_STUDIO_INTEGRITY_KEY',message:'Use a high-entropy secret of at least 32 bytes.'}]);
+function validateSecret(key, pathLabel) {
+  if(key && Buffer.byteLength(key,'utf8')<32) {
+    throw new IntegrityError(`${pathLabel} must be at least 32 UTF-8 bytes.`,[{path:`environment.${pathLabel}`,message:'Use a high-entropy secret of at least 32 bytes.'}]);
+  }
+  return key;
+}
+
+function currentIntegrityOptions() {
+  const key=validateSecret(String(process.env.XHS_STUDIO_INTEGRITY_KEY||''),'XHS_STUDIO_INTEGRITY_KEY');
   return {key,keyId:String(process.env.XHS_STUDIO_INTEGRITY_KEY_ID||'local-v1')};
+}
+
+function integrityKeyring() {
+  const raw=String(process.env.XHS_STUDIO_INTEGRITY_KEYRING||'').trim();
+  if(!raw) return {};
+  let parsed;
+  try {
+    parsed=JSON.parse(raw);
+  } catch {
+    throw new IntegrityError('XHS_STUDIO_INTEGRITY_KEYRING must be valid JSON.',[{path:'environment.XHS_STUDIO_INTEGRITY_KEYRING',message:'Expected a JSON object mapping key IDs to historical HMAC secrets.'}]);
+  }
+  if(!parsed || typeof parsed!=='object' || Array.isArray(parsed)) {
+    throw new IntegrityError('XHS_STUDIO_INTEGRITY_KEYRING must be a JSON object.',[{path:'environment.XHS_STUDIO_INTEGRITY_KEYRING',message:'Expected a JSON object mapping key IDs to historical HMAC secrets.'}]);
+  }
+  const out={};
+  for(const [rawKeyId,rawKey] of Object.entries(parsed)) {
+    const keyId=String(rawKeyId||'').trim();
+    const key=String(rawKey??'');
+    if(!keyId) throw new IntegrityError('Integrity keyring contains an empty key ID.',[{path:'environment.XHS_STUDIO_INTEGRITY_KEYRING',message:'Every historical key requires a non-empty key ID.'}]);
+    validateSecret(key,'XHS_STUDIO_INTEGRITY_KEYRING');
+    if(!key) throw new IntegrityError(`Integrity keyring entry ${keyId} is empty.`,[{path:'environment.XHS_STUDIO_INTEGRITY_KEYRING',message:`Historical key ${keyId} must not be empty.`}]);
+    out[keyId]=key;
+  }
+  return out;
+}
+
+function verificationIntegrityOptions(integrity) {
+  const current=currentIntegrityOptions();
+  if(integrity?.algorithm!=='hmac-sha256') return current;
+  const keyId=String(integrity.keyId||'').trim();
+  if(current.key && current.keyId===keyId) return current;
+  const key=keyId ? integrityKeyring()[keyId]||'' : '';
+  return {key,keyId};
 }
 
 function snapshotRecordValue(snapshot) {
@@ -51,7 +90,7 @@ function verifySnapshotEvidence(snapshot) {
     throw new IntegrityError('Stored snapshot uses an unsupported integrity scope.',[{path:'integrity.scope',message:`Unsupported scope ${snapshot.integrity.scope||'(missing)'}.`}]);
   }
 
-  const result=verifyIntegrity(target,snapshot.integrity,snapshot.integrity.scope,integrityOptions());
+  const result=verifyIntegrity(target,snapshot.integrity,snapshot.integrity.scope,verificationIntegrityOptions(snapshot.integrity));
   if(!result.ok) throw new IntegrityError('Stored snapshot evidence failed integrity verification.',result.errors);
   return {
     verified:true,
@@ -228,7 +267,7 @@ export async function saveSnapshot(dataDir, projectId, raw) {
     validation: { inputWarnings:inputValidation.warnings, warnings: validation.warnings },
   };
   snapshot.analysis = analyze(harvest);
-  snapshot.integrity=makeIntegrity(snapshotRecordValue(snapshot),SNAPSHOT_SCOPE_V2,integrityOptions());
+  snapshot.integrity=makeIntegrity(snapshotRecordValue(snapshot),SNAPSHOT_SCOPE_V2,currentIntegrityOptions());
   await writeJsonAtomic(path.join(dataDir,'snapshots',projectId,`${snapshot.id}.json`), snapshot);
   return hydrateSnapshot(snapshot);
 }
