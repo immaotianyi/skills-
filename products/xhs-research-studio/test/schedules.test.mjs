@@ -7,17 +7,20 @@ import { createSchedule, getSchedule, listSchedules, updateSchedule, claimDueSch
 
 const projectId='prj_schedule_test';
 
-test('schedule storage enforces bounded cadence and persists run metadata',async()=>{
+test('schedule storage enforces bounded cadence and canonical run budgets',async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-schedules-'));
   try{
     await assert.rejects(()=>createSchedule(dataDir,projectId,{intervalMinutes:10}),/between 60/);
-    const schedule=await createSchedule(dataDir,projectId,{intervalMinutes:60,startAt:'2026-10-10T00:00:00.000Z',budget:{maxNotes:120,maxComments:3000,maxSeconds:180}});
+    const schedule=await createSchedule(dataDir,projectId,{intervalMinutes:60,startAt:'2026-10-10T00:00:00.000Z',budget:{maxNotes:120,maxComments:0,maxSeconds:180}});
     assert.equal(schedule.intervalMinutes,60);
     assert.equal(schedule.budget.maxNotes,120);
+    assert.equal(schedule.budget.maxComments,0,'schedule must preserve the valid zero-comments budget');
+    assert.equal(schedule.budget.maxSeconds,180);
     assert.equal((await listSchedules(dataDir,projectId)).length,1);
-    const updated=await updateSchedule(dataDir,schedule.id,{enabled:false,intervalMinutes:120});
+    const updated=await updateSchedule(dataDir,schedule.id,{enabled:false,intervalMinutes:120,budget:{maxNotes:0,maxComments:25,maxSeconds:1}});
     assert.equal(updated.enabled,false);
     assert.equal(updated.intervalMinutes,120);
+    assert.deepEqual(updated.budget,{maxNotes:1,maxComments:25,maxSeconds:15});
     const fetched=await getSchedule(dataDir,schedule.id);
     assert.equal(fetched.id,schedule.id);
     const recorded=await recordScheduleRun(dataDir,schedule.id,{runId:'run_schedule_1',state:'completed',at:'2026-10-10T01:00:00.000Z'});
