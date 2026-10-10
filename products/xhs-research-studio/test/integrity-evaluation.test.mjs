@@ -68,7 +68,7 @@ test('Evidence Pack v1.2 is tamper-evident and carries snapshot integrity',async
   }
 });
 
-test('evaluation reports auditable per-class metrics without falsely granting a scientific claim',()=>{
+test('evaluation reports confidence bounds without falsely granting a scientific claim',()=>{
   const records=[
     {id:'1',content:'这个太贵了，而且辣眼',labels:{complaints:true},reviewer:'r1',category:'防晒'},
     {id:'2',content:'不辣眼，也不会回购',labels:{},reviewer:'r2',category:'防晒'},
@@ -78,12 +78,45 @@ test('evaluation reports auditable per-class metrics without falsely granting a 
   const audit=auditEvaluationDataset(records);
   assert.equal(audit.sampleSize,4);
   assert.equal(audit.machineCheckablePreconditions,false);
-  assert.ok(audit.warnings.some(x=>x.includes('below the 200-comment')));
+  assert.ok(audit.warnings.some(x=>x.includes('below the 400-comment')));
   const result=evaluateSignalClassifier(records);
+  assert.equal(result.schemaVersion,'xhs-signal-evaluation/2.0');
   assert.equal(result.perClass.complaints.tp,1);
+  assert.ok(result.perClass.complaints.precision95.low<1);
   assert.equal(result.perClass.purchaseIntent.tp,1);
   assert.equal(result.perClass.positive.tp,1);
+  assert.equal(result.claimGate.uses95PercentLowerBounds,true);
   assert.equal(result.claimGate.eligibleForValidatedClassifierClaim,false);
   assert.equal(result.audit.humanValidationStillRequired,true);
   assert.ok(result.audit.datasetIntegrity.digest);
+});
+
+test('machine preconditions require 400 unique, multi-category, double-reviewed holdout records',()=>{
+  const classes=['questions','complaints','purchaseIntent','positive'];
+  const records=Array.from({length:400},(_,i)=>{
+    const target=classes[i%classes.length];
+    const labels={questions:false,complaints:false,purchaseIntent:false,positive:false,[target]:true};
+    return {
+      id:`holdout-${i}`,
+      content:`独立验证样本 ${i} 类别 ${target}`,
+      category:`category-${i%4}`,
+      sourceRef:`source-${i}`,
+      reviews:[
+        {reviewer:'reviewer-a',labels},
+        {reviewer:'reviewer-b',labels},
+      ],
+    };
+  });
+  const audit=auditEvaluationDataset(records);
+  assert.equal(audit.sampleSize,400);
+  assert.equal(audit.doubleReviewedRows,400);
+  assert.equal(audit.unresolvedDisagreementRows,0);
+  assert.equal(audit.categoryCount,4);
+  assert.equal(audit.interRaterTargetsMet,true);
+  assert.equal(audit.machineCheckablePreconditions,true);
+  for(const k of classes){
+    assert.equal(audit.positiveLabels[k],100);
+    assert.equal(audit.interRater[k].agreement,1);
+    assert.equal(audit.interRater[k].kappa,1);
+  }
 });
