@@ -3,6 +3,8 @@ import { executorConfigured, runConfiguredExecutor } from './executor.mjs';
 import { claimDueSchedules, createSchedule, getSchedule, listSchedules, recordScheduleRun, updateSchedule } from './schedules.mjs';
 import { getProject, getProjects, listSnapshots, loadSnapshot, mutateProjects, saveSnapshot } from './storage.mjs';
 import { diffHarvest } from './analysis.mjs';
+import { normalizeHarvest } from './normalize.mjs';
+import { validateHarvestInput } from './validation.mjs';
 
 export class RunServiceError extends Error{
   constructor(statusCode,message,code='RUN_SERVICE_ERROR'){super(message);this.statusCode=statusCode;this.code=code}
@@ -14,6 +16,26 @@ function counts(snapshot){
     comments:snapshot?.harvest?.comments?.length||0,
     queries:snapshot?.harvest?.queries?.length||0,
   };
+}
+
+function executorHarvestWithinBudget(raw,budget){
+  const validation=validateHarvestInput(raw);
+  if(!validation.ok){
+    const error=new Error(`Executor returned invalid Harvest payload: ${validation.errors.slice(0,5).map(item=>`${item.path}: ${item.message}`).join('; ')}`);
+    error.code='EXECUTOR_INVALID_HARVEST';
+    throw error;
+  }
+  const normalized=normalizeHarvest(raw);
+  const actual={notes:normalized.notes.length,comments:normalized.comments.length,queries:normalized.queries.length};
+  const violations=[];
+  if(actual.notes>budget.maxNotes)violations.push(`notes ${actual.notes} > maxNotes ${budget.maxNotes}`);
+  if(actual.comments>budget.maxComments)violations.push(`comments ${actual.comments} > maxComments ${budget.maxComments}`);
+  if(violations.length){
+    const error=new Error(`Executor output exceeded the server-enforced run budget: ${violations.join(', ')}.`);
+    error.code='RUN_BUDGET_EXCEEDED';
+    throw error;
+  }
+  return actual;
 }
 
 export class RunService{
@@ -46,8 +68,6 @@ export class RunService{
 
   async launch(project,{budget={},trigger='manual',scheduleId=null}={}){
     if(this.#busy(project.id))throw new RunServiceError(409,'A Harvest run is already active or launching for this project.','RUN_BUSY');
-    // Reserve synchronously before the first await. Without this, two concurrent HTTP
-    // requests can both observe an idle project and create two queued runs.
     this.launchingProjects.add(project.id);
     try{
       const run=await createRun(this.dataDir,project,{budget,trigger,scheduleId});
@@ -116,8 +136,9 @@ export class RunService{
         return current;
       }
 
-      // Commit point: once set, cancellation is rejected so persisted run state cannot
-      // disagree with a snapshot that is already being written.
+      // Treat note/comment budgets as server-side hard limits, not executor advice.
+      executorHarvestWithinBudget(result.harvest,current.budget);
+
       if(active)active.committing=true;
       const before=await listSnapshots(this.dataDir,project.id);
       const snapshot=await saveSnapshot(this.dataDir,project.id,result.harvest);
@@ -175,9 +196,6 @@ export class RunService{
         continue;
       }
       try{
-        // #execute owns schedule run-state recording. Do not write the stale queued
-        // state here after launch because a very fast executor may already be running
-        // or completed by the time launch() resolves.
         await this.launch(project,{budget:schedule.budget,trigger:'schedule',scheduleId:schedule.id});
       }catch(error){
         await recordScheduleRun(this.dataDir,schedule.id,{state:'launch_failed',error});
