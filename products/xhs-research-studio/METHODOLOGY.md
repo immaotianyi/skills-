@@ -114,7 +114,18 @@ The quality score is a triage indicator, not a statistical confidence interval.
 
 Hard access states such as CAPTCHA, ACCESS_DENIED, and BLOCKED must stop collection interpretation until the coverage state is resolved by permissible means.
 
-## 10. Safety boundary
+## 10. Evidence integrity
+
+Integrity metadata has two deliberately different meanings:
+
+- **SHA-256 checksum:** detects accidental or uncoordinated changes to canonicalized evidence, but is not authentication because an actor who can rewrite both content and checksum can recompute it.
+- **HMAC-SHA256 authentication:** when an external secret key is configured, evidence is authenticated against that key. The secret is never stored in the snapshot or Evidence Pack.
+
+The system must not label a plain checksum as authenticated or cryptographically signed. A signed-pack workflow requires an authenticated source snapshot plus a separate external pack key.
+
+HMAC protects integrity/authenticity relative to possession of the secret; it does not establish who originally collected the evidence, prove platform truth, or replace provenance fields and source review.
+
+## 11. Safety boundary
 
 The product must not implement or recommend:
 
@@ -127,33 +138,52 @@ The product must not implement or recommend:
 
 Public or user-authorized read-only collection is the product boundary.
 
-## 11. Commercial release validation gate
+## 12. Commercial release validation gate
 
-A release should not be called commercially validated solely because automated tests pass. Before claiming validated signal-classification quality, create a versioned human-labeled evaluation corpus that spans multiple categories and includes difficult negatives.
+A release should not be called scientifically validated solely because automated tests pass. Before claiming validated signal-classification quality, use a frozen, versioned, human-reviewed holdout spanning multiple materially different categories and difficult negatives.
 
-Target evidence gate for a future validated classifier release:
+The current machine-checkable minimums are intentionally high:
 
-- at least 200 independently reviewed comments, with adequate examples for each signal class;
-- per-class precision target >= 0.90 for complaints and purchase intent;
-- per-class recall target >= 0.80;
-- published confusion matrix and error taxonomy;
-- explicit treatment of ambiguous/multi-label comments;
-- no test examples duplicated from hard-coded lexical rules solely to inflate accuracy.
+- at least **400 unique holdout comments**;
+- at least **50 positive examples per signal class**;
+- at least **3 materially different categories**;
+- duplicate-content ratio no higher than **2%**;
+- every holdout item independently reviewed by at least **2 reviewers**;
+- all reviewer disagreements explicitly adjudicated before scoring;
+- raw agreement at least **0.85** and Cohen's kappa at least **0.65** for every signal class;
+- no final-holdout examples copied from hard-coded lexical rules merely to inflate scores;
+- the final holdout must not be reused for rule tuning and then reported as untouched validation evidence.
+
+Metric gates use the **lower bound of a two-sided 95% Wilson confidence interval**, not only point estimates:
+
+| Signal | Precision lower bound | Recall lower bound |
+| --- | ---: | ---: |
+| Questions | 0.85 | 0.80 |
+| Complaints / risk | 0.90 | 0.85 |
+| Purchase intent | 0.90 | 0.85 |
+| Positive feedback | 0.85 | 0.80 |
+
+The evaluation report must preserve per-class confusion counts, error examples, inter-rater statistics, duplicate statistics, category coverage, and a dataset fingerprint.
+
+Even when all machine gates pass, software does **not** self-approve a scientific validation claim. A human must verify reviewer independence, holdout governance, provenance, category relevance, and leakage controls. See `VALIDATION.md`.
 
 Until that evidence exists, the UI and client reports must continue describing the signal layer as transparent rule-based triage.
 
-## 12. Engineering release gate
+## 13. Engineering release gate
 
-A production-ready release requires, at minimum:
+A production-ready local/pilot release requires, at minimum:
 
-- syntax checks;
+- syntax checks for every executable/core module;
 - unit/regression tests;
 - API end-to-end tests;
+- real headless-browser UI end-to-end checks;
 - malformed/empty/duplicate input tests;
 - snapshot-order/diff regression tests;
 - safety-state tests;
+- checksum/HMAC integrity tests including wrong/missing-key failures;
 - CSV/Evidence Pack/report export checks;
-- Docker build and container health check;
+- signed Evidence Pack end-to-end verification when authenticated integrity is enabled;
+- Docker build, non-root execution, read-only root filesystem, and persistence/restart check;
 - no known P0/P1 defects;
 - documented remaining limitations.
 
