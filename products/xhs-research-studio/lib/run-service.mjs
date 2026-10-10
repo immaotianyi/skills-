@@ -19,9 +19,9 @@ function counts(snapshot){
 }
 
 function executorHarvestWithinBudget(raw,budget){
-  const validation=validateHarvestInput(raw);
+  const validation=validateHarvestInput(raw,{strictV2:true});
   if(!validation.ok){
-    const error=new Error(`Executor returned invalid Harvest payload: ${validation.errors.slice(0,5).map(item=>`${item.path}: ${item.message}`).join('; ')}`);
+    const error=new Error(`Executor returned invalid strict Harvest v2 payload: ${validation.errors.slice(0,5).map(item=>`${item.path}: ${item.message}`).join('; ')}`);
     error.code='EXECUTOR_INVALID_HARVEST';
     throw error;
   }
@@ -136,7 +136,6 @@ export class RunService{
         return current;
       }
 
-      // Treat note/comment budgets as server-side hard limits, not executor advice.
       executorHarvestWithinBudget(result.harvest,current.budget);
 
       if(active)active.committing=true;
