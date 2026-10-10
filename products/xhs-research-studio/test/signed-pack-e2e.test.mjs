@@ -14,6 +14,8 @@ const serverPath=path.join(root,'server.mjs');
 const exporterPath=path.join(root,'export-signed-pack.mjs');
 const demoPath=path.join(root,'public','demo-harvest.json');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const snapshotKey='snapshot-integrity-test-key-32-bytes-minimum-2026';
+const packKey='pack-integrity-test-key-32-bytes-minimum-2026';
 
 async function waitForHealth(base){
   for(let i=0;i<80;i++){
@@ -23,12 +25,21 @@ async function waitForHealth(base){
   throw new Error('server did not become healthy');
 }
 
-test('signed-pack exporter produces a self-verifying v1.2 deliverable from a persisted signed snapshot',{timeout:15000},async()=>{
+test('signed-pack exporter produces an authenticated v1.2 deliverable from an authenticated persisted snapshot',{timeout:15000},async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-signed-pack-data-'));
   const outDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-signed-pack-out-'));
   const port=56600+Math.floor(Math.random()*300);
   const base=`http://127.0.0.1:${port}`;
-  const child=spawn(process.execPath,[serverPath],{env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir},stdio:['ignore','pipe','pipe']});
+  const child=spawn(process.execPath,[serverPath],{
+    env:{
+      ...process.env,
+      PORT:String(port),
+      XHS_STUDIO_DATA:dataDir,
+      XHS_STUDIO_INTEGRITY_KEY:snapshotKey,
+      XHS_STUDIO_INTEGRITY_KEY_ID:'snapshot-test-v1',
+    },
+    stdio:['ignore','pipe','pipe'],
+  });
   try{
     await waitForHealth(base);
     const projectResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Signed Pack E2E'})});
@@ -38,18 +49,32 @@ test('signed-pack exporter produces a self-verifying v1.2 deliverable from a per
     const ingestResponse=await fetch(`${base}/api/projects/${project.id}/ingest`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(demo)});
     assert.equal(ingestResponse.status,201);
     const ingested=await ingestResponse.json();
-    assert.ok(ingested.integrity?.digest);
+    assert.equal(ingested.integrity?.algorithm,'hmac-sha256');
+    assert.equal(ingested.integrity?.authenticated,true);
     assert.equal(ingested.integrityStatus?.verified,true);
+    assert.equal(ingested.integrityStatus?.authenticated,true);
+    assert.equal(ingested.integrityStatus?.checksumOnly,false);
 
     const outFile=path.join(outDir,'signed-pack.json');
-    const {stdout,stderr}=await execFileAsync(process.execPath,[exporterPath,project.id,'--base',base,'--out',outFile],{encoding:'utf8'});
+    const {stdout,stderr}=await execFileAsync(
+      process.execPath,
+      [exporterPath,project.id,'--base',base,'--out',outFile],
+      {encoding:'utf8',env:{...process.env,XHS_STUDIO_PACK_INTEGRITY_KEY:packKey,XHS_STUDIO_PACK_INTEGRITY_KEY_ID:'pack-test-v1'}},
+    );
     assert.equal(stderr,'');
     assert.equal(stdout.trim(),outFile);
     const pack=JSON.parse(await fs.readFile(outFile,'utf8'));
     assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.2');
-    assert.ok(pack.snapshot.integrity?.digest);
-    assert.ok(pack.integrity?.digest);
-    assert.equal(verifyEvidencePack(pack).ok,true);
+    assert.equal(pack.snapshot.integrity?.algorithm,'hmac-sha256');
+    assert.equal(pack.snapshot.integrityStatus?.authenticated,true);
+    assert.equal(pack.integrity?.algorithm,'hmac-sha256');
+    assert.equal(pack.integrity?.authenticated,true);
+    const verification=verifyEvidencePack(pack,{key:packKey,keyId:'pack-test-v1'});
+    assert.equal(verification.ok,true);
+    assert.equal(verification.authenticated,true);
+
+    const wrongKey=verifyEvidencePack(pack,{key:'wrong-pack-key-but-still-long-enough-000000000000',keyId:'pack-test-v1'});
+    assert.equal(wrongKey.ok,false);
   } finally {
     child.kill('SIGTERM');
     await Promise.all([fs.rm(dataDir,{recursive:true,force:true}),fs.rm(outDir,{recursive:true,force:true})]);
