@@ -128,7 +128,7 @@ test('tampered latest snapshot keeps its capture time in listings so default-lat
     assert.equal(listing.length,2);
     assert.equal(listing[0].id,earlier.id);
     assert.equal(listing[1].id,later.id);
-    assert.equal(listing[1].createdAt,'2026-10-11T00:00:00Z');
+    assert.equal(Date.parse(listing[1].createdAt),Date.parse('2026-10-11T00:00:00Z'));
     assert.equal(listing[1].integrityStatus.verified,false);
     await assert.rejects(()=>loadSnapshot(dir,'prj_list',listing.at(-1).id),IntegrityError);
   } finally {
