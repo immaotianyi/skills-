@@ -38,6 +38,7 @@ jobs:
           node --check products/xhs-research-studio/evaluate-signals.mjs
           node --check products/xhs-research-studio/export-signed-pack.mjs
           node --check products/xhs-research-studio/browser-smoke.mjs
+          node --check products/xhs-research-studio/hosted-smoke.mjs
           node --check products/xhs-research-studio/lib/normalize.mjs
           node --check products/xhs-research-studio/lib/analysis.mjs
           node --check products/xhs-research-studio/lib/storage.mjs
@@ -62,6 +63,8 @@ jobs:
         run: node --test products/xhs-research-studio/test/*.test.mjs
       - name: End-to-end API smoke test
         run: node products/xhs-research-studio/smoke-test.mjs
+      - name: Hosted paid-beta API smoke test
+        run: node products/xhs-research-studio/hosted-smoke.mjs
       - name: Headless Chrome UI end-to-end smoke
         run: node products/xhs-research-studio/browser-smoke.mjs
       - name: Build hardened container
