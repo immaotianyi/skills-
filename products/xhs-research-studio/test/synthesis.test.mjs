@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHarvest } from '../lib/normalize.mjs';
 import { analyze } from '../lib/analysis.mjs';
-import { buildGroundedSynthesisInput, validateGroundedSynthesis, synthesizeWithOpenAI } from '../lib/synthesis.mjs';
+import { buildGroundedSynthesisInput, validateGroundedSynthesis, synthesizeWithOpenAI, synthesizeWithCommand } from '../lib/synthesis.mjs';
 
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const demo=JSON.parse(await fs.readFile(path.join(root,'public','demo-harvest.json'),'utf8'));
@@ -68,4 +68,18 @@ test('OpenAI adapter uses Responses structured outputs and still performs local 
   assert.equal(result.provider.name,'openai');
   assert.equal(result.provider.responseId,'resp_test');
   assert.equal(result.grounding.validated,true);
+});
+
+test('fixed-command synthesis adapter runs with shell disabled protocol and local grounding validation',async()=>{
+  const input=buildGroundedSynthesisInput(project,snapshot);
+  const result=await synthesizeWithCommand(input,{
+    env:{
+      XHS_STUDIO_SYNTHESIS_EXECUTOR:process.execPath,
+      XHS_STUDIO_SYNTHESIS_EXECUTOR_ARGS:JSON.stringify([path.join(root,'test','fixtures','mock-synthesis-executor.mjs')]),
+    },
+    timeoutMs:5000,
+  });
+  assert.equal(result.provider.name,'command');
+  assert.equal(result.grounding.validated,true);
+  assert.ok(result.claims.every(claim=>claim.evidenceIds.length>0));
 });
