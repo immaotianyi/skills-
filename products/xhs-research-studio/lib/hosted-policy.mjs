@@ -3,6 +3,24 @@ import { HostedStoreError } from './hosted-db.mjs';
 const DISABLE_SCHEDULE_CODES=new Set(['ENTITLEMENT_REQUIRED','RUN_BUDGET_PLAN_LIMIT']);
 const ACTIVE_STATUSES=new Set(['active','trialing']);
 
+function hostedEnabled(env=process.env){return ['1','true','yes'].includes(String(env.XHS_STUDIO_HOSTED||'').toLowerCase())}
+
+export function assertHostedDeploymentConfig(env=process.env){
+  if(!hostedEnabled(env))return {hosted:false};
+  const raw=String(env.XHS_STUDIO_PUBLIC_URL||'').trim();
+  if(!raw)throw new HostedStoreError('Hosted mode requires XHS_STUDIO_PUBLIC_URL.',{code:'HOSTED_PUBLIC_URL_REQUIRED',statusCode:503});
+  let url;
+  try{url=new URL(raw)}catch{throw new HostedStoreError('XHS_STUDIO_PUBLIC_URL must be an absolute URL.',{code:'HOSTED_PUBLIC_URL_INVALID',statusCode:503})}
+  const local=['localhost','127.0.0.1','::1'].includes(url.hostname);
+  if(url.protocol!=='https:'&&!(url.protocol==='http:'&&local)){
+    throw new HostedStoreError('Hosted public URL must use HTTPS; plain HTTP is allowed only for localhost tests.',{code:'HOSTED_HTTPS_REQUIRED',statusCode:503});
+  }
+  if(url.username||url.password||url.search||url.hash||url.pathname!=='/'){
+    throw new HostedStoreError('XHS_STUDIO_PUBLIC_URL must contain only the public origin (no credentials, path, query, or fragment).',{code:'HOSTED_PUBLIC_URL_INVALID',statusCode:503});
+  }
+  return {hosted:true,origin:url.origin,local};
+}
+
 function assertResumeAllowed(store,workspaceId,budget){
   const ent=store.getEntitlement(workspaceId);
   if(!ACTIVE_STATUSES.has(ent.status))throw new HostedStoreError('An active paid or trial entitlement is required.',{code:'ENTITLEMENT_REQUIRED',statusCode:402});
@@ -14,6 +32,7 @@ function assertResumeAllowed(store,workspaceId,budget){
 
 export function createHostedRunPolicy(store){
   if(!store)throw new TypeError('HostedStore is required');
+  assertHostedDeploymentConfig();
   return {
     async beforeRun(project,{budget,trigger,scheduleId,resume=false,runId=null}){
       if(!project?.workspaceId)throw new HostedStoreError('Hosted projects must belong to a workspace.',{code:'WORKSPACE_REQUIRED',statusCode:403});
