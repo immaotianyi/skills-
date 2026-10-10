@@ -36,6 +36,7 @@ The container runs as a non-root user. Compose binds the service to localhost, u
 - Harvest input validation + normalization (legacy-compatible input, strict Harvest v2 contract)
 - First-class notes + comments
 - Snapshot history with atomic JSON writes
+- Serialized in-process project mutations to prevent lost updates under concurrent requests
 - Backward-compatible in-memory analysis refresh for older snapshots
 - Snapshot diff: added notes, previously observed/not-currently-observed notes, engagement movers, emerging comment terms
 - Observed search visibility from `queries[].rankingPosition`
@@ -118,13 +119,17 @@ Run the same major checks used by CI:
 node --check products/xhs-research-studio/server-v2.mjs
 node --check products/xhs-research-studio/public/app.js
 node --check products/xhs-research-studio/cli.mjs
+node --check products/xhs-research-studio/browser-smoke.mjs
 node --test products/xhs-research-studio/test/*.test.mjs
 node products/xhs-research-studio/smoke-test.mjs
+node products/xhs-research-studio/browser-smoke.mjs
 ```
+
+The browser smoke uses a real headless Chrome/Chromium DevTools session: it opens the product, waits for templates, clicks the built-in demo, verifies notes/evidence groups render, opens the client report, and fails on browser runtime errors.
 
 The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
 
-The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, API end-to-end flow, exports, and a synthetic 500-note / 5,000-comment scale regression.
+The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, API end-to-end flow, CLI delivery/export flow, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
 
 Automated test success is engineering evidence, not scientific validation of consumer-insight claims. A separately reviewed labeled corpus is required before claiming validated classifier accuracy; see `METHODOLOGY.md`.
 
