@@ -1,0 +1,18 @@
+#hostedBar{position:sticky;top:0;z-index:50;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 18px;background:#171717;color:#fff;border-bottom:1px solid #333}
+#hostedBar select,#hostedBar button{width:auto;margin:0}
+#hostedBar .hostedGrow{flex:1}
+#hostedBar small{opacity:.8}
+#hostedAuthGate{position:fixed;inset:0;z-index:1000;background:rgba(10,10,10,.88);display:grid;place-items:center;padding:24px}
+#hostedAuthGate[hidden]{display:none}
+#hostedAuthCard{width:min(520px,100%);background:#fff;color:#171717;border-radius:18px;padding:26px}
+#hostedAuthCard form{display:grid;gap:10px;margin-top:14px}
+#hostedAuthCard .authTabs{display:flex;gap:8px}
+#hostedAuthCard .authTabs button{width:auto}
+#hostedAuthError{color:#a21b1b;min-height:1.4em}
+#hostedPanel{position:fixed;right:18px;top:72px;z-index:80;width:min(480px,calc(100vw - 36px));max-height:calc(100vh - 92px);overflow:auto;background:#fff;border:1px solid #ccc;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.22);padding:18px}
+#hostedPanel[hidden]{display:none}
+#hostedPanel .hostedRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#hostedPanel button,#hostedPanel select{width:auto}
+#hostedPanel pre{white-space:pre-wrap;max-height:300px;overflow:auto;background:#f5f5f3;padding:12px;border-radius:10px}
+#hostedToast{position:fixed;bottom:18px;right:18px;z-index:1200;background:#171717;color:#fff;padding:10px 14px;border-radius:10px;max-width:480px}
+#hostedToast[hidden]{display:none}
