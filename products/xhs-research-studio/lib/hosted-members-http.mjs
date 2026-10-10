@@ -1,5 +1,6 @@
 import { assertSameOrigin, requireHostedSession } from './hosted-http.mjs';
 import { handleWorkspaceDashboardApi } from './workspace-dashboard-http.mjs';
+import { handleApiKeysApi } from './api-keys-http.mjs';
 import {
   createWorkspaceInvitation,
   acceptWorkspaceInvitation,
@@ -16,6 +17,7 @@ function origin(req,env=process.env){
 }
 
 export async function handleHostedMembersApi({req,res,url,store,readJson,send,env=process.env}){
+  if(await handleApiKeysApi({req,res,url,store,readJson,send,env}))return true;
   if(await handleWorkspaceDashboardApi({req,res,url,store,readJson,send,env}))return true;
   const parts=url.pathname.split('/').filter(Boolean);
 
