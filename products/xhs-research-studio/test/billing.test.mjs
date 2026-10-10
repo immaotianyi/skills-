@@ -74,10 +74,12 @@ test('signed billing events activate, downgrade, and deduplicate workspace entit
   assert.equal(duplicate.duplicate,true);
 
   const pastDue={id:'evt_sub_update',type:'customer.subscription.updated',data:{object:{
-    object:'subscription',id:'sub_1',customer:'cus_1',status:'past_due',current_period_end:1_900_000_000,metadata:{workspace_id:workspace.id,plan:'pilot'},
+    object:'subscription',id:'sub_1',customer:'cus_1',status:'past_due',metadata:{workspace_id:workspace.id,plan:'pilot'},
+    items:{data:[{id:'si_1',price:{id:'price_pilot'},current_period_end:1_900_000_000}]},
   }}};
   applyStripeEvent(store,pastDue,{rawBody:JSON.stringify(pastDue),env});
   assert.equal(store.getEntitlement(workspace.id).status,'past_due');
+  assert.equal(store.getEntitlement(workspace.id).currentPeriodEnd,new Date(1_900_000_000*1000).toISOString());
   assert.throws(()=>store.reserveRun(workspace.id,{maxNotes:1,maxComments:0}),error=>error.code==='ENTITLEMENT_REQUIRED');
 
   const canceled={id:'evt_sub_delete',type:'customer.subscription.deleted',data:{object:{
