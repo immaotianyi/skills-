@@ -12,7 +12,7 @@ const fixture=path.join(root,'public','demo-harvest.json');
 const mock=path.join(root,'test','fixtures','mock-harvest-executor.mjs');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-async function waitRun(service,projectId,runId,states=['completed','manual_action_required','failed'],timeout=7000){
+async function waitRun(service,projectId,runId,states=['completed','manual_action_required','failed','cancelled'],timeout=7000){
   const until=Date.now()+timeout;
   while(Date.now()<until){
     const run=await service.run(projectId,runId);
@@ -72,6 +72,28 @@ test('RunService never auto-ingests manual platform hard stops',async()=>{
       const run=await waitRun(service,project.id,queued.id);
       assert.equal(run.state,'manual_action_required');
       assert.equal(run.riskState,'CAPTCHA');
+      assert.equal((await listSnapshots(dataDir,project.id)).length,0);
+    });
+  }finally{await fs.rm(dataDir,{recursive:true,force:true})}
+});
+
+test('RunService cancellation aborts executor and never ingests a snapshot',async()=>{
+  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-cancel-'));
+  try{
+    const project=await seedProject(dataDir,'prj_cancel');
+    await withEnv({
+      XHS_STUDIO_HARVEST_EXECUTOR:process.execPath,
+      XHS_STUDIO_HARVEST_EXECUTOR_ARGS:JSON.stringify([mock]),
+      XHS_EXECUTOR_MODE:'hang',
+    },async()=>{
+      const service=new RunService(dataDir);
+      const queued=await service.launch(project,{budget:{maxSeconds:60}});
+      const until=Date.now()+2000;
+      while(Date.now()<until){const row=await service.run(project.id,queued.id);if(row?.state==='running')break;await sleep(10)}
+      const cancelled=await service.cancel(project,queued.id);
+      assert.equal(cancelled.state,'cancelled');
+      const final=await waitRun(service,project.id,queued.id,['cancelled']);
+      assert.equal(final.state,'cancelled');
       assert.equal((await listSnapshots(dataDir,project.id)).length,0);
     });
   }finally{await fs.rm(dataDir,{recursive:true,force:true})}
