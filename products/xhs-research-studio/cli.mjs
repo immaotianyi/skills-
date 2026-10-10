@@ -33,7 +33,7 @@ async function writeOrStdout(value,file=''){
   await fs.writeFile(file,text,'utf8');
   process.stdout.write(`${file}\n`);
 }
-function usage(){out(`XHS Research Studio CLI\n\nCommands:\n  health\n  projects\n  validate HARVEST.json\n  analyze HARVEST.json\n  create --name NAME [--client NAME] [--category NAME] [--keywords a,b] [--competitors a,b]\n  plan PROJECT_ID\n  ingest PROJECT_ID HARVEST.json\n  report PROJECT_ID [--out report.md]\n  diff PROJECT_ID\n  ranks PROJECT_ID\n  evidence PROJECT_ID [--term TERM]\n  pack PROJECT_ID [--out evidence-pack.json]\n  csv PROJECT_ID [--out evidence.csv]\n\nOptions:\n  --base http://127.0.0.1:5418\n  or XHS_STUDIO_URL environment variable\n`)}
+function usage(){out(`XHS Research Studio CLI\n\nCommands:\n  health\n  projects\n  validate HARVEST.json\n  analyze HARVEST.json\n  create --name NAME [--client NAME] [--category NAME] [--keywords a,b] [--competitors a,b]\n  plan PROJECT_ID\n  ingest PROJECT_ID HARVEST.json\n  report PROJECT_ID [--out report.md]\n  diff PROJECT_ID\n  ranks PROJECT_ID\n  evidence PROJECT_ID [--term TERM]\n  pack PROJECT_ID [--version 1.1|1.2] [--require-authenticated 1] [--out evidence-pack.json]\n  csv PROJECT_ID [--out evidence.csv]\n\nOptions:\n  --base http://127.0.0.1:5418\n  or XHS_STUDIO_URL environment variable\n`)}
 
 async function fileJson(file){
   if(!file)throw new Error('HARVEST.json is required');
@@ -77,7 +77,13 @@ async function main(){
   }
   if(command==='pack'){
     const file=take('out');
-    await writeOrStdout((await request(`/api/projects/${projectId}/evidence-pack`)).value,file);return;
+    const version=take('version');
+    const requireAuthenticated=take('require-authenticated');
+    const params=new URLSearchParams();
+    if(version)params.set('version',version);
+    if(requireAuthenticated)params.set('requireAuthenticated',requireAuthenticated);
+    const query=params.size?`?${params.toString()}`:'';
+    await writeOrStdout((await request(`/api/projects/${projectId}/evidence-pack${query}`)).value,file);return;
   }
   if(command==='csv'){
     const file=take('out');
