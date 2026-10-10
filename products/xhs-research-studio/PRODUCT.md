@@ -2,12 +2,12 @@
 
 ## Product promise
 
-Turn a bounded Xiaohongshu research question into a reusable, source-traceable research asset instead of a one-off spreadsheet, while keeping collection gaps, interpretation limits, and source evidence visible.
+Turn a bounded Xiaohongshu research question into a reusable, source-traceable research asset instead of a one-off spreadsheet, while keeping collection gaps, interpretation limits, source evidence, and collection-run state visible.
 
 The product has two layers:
 
-1. **Harvest Skill** — obtains public or user-authorized Xiaohongshu evidence and emits Harvest v2 JSON without bypassing platform safety controls.
-2. **Research Studio** — validates and stores snapshots, compares observed change, surfaces auditable comment signals, tracks observed search visibility, groups lexical evidence, exports client deliverables, and keeps conclusions traceable to source evidence.
+1. **Harvest Skill / authorized executor** — obtains public or user-authorized Xiaohongshu evidence and emits Harvest v2 JSON without bypassing platform safety controls.
+2. **Research Studio** — plans and tracks bounded collection runs, validates and stores snapshots, schedules recurring monitoring, compares observed change, surfaces auditable comment signals, tracks observed search visibility, groups lexical evidence, exports client deliverables, and keeps conclusions traceable to source evidence.
 
 ## Primary jobs to be done
 
@@ -21,7 +21,7 @@ The product has two layers:
 
 ### Research / social-intelligence team
 
-“I already sell analysis. I need a cleaner evidence-collection, normalization, provenance, and export layer that can feed my existing workflow.”
+“I already sell analysis. I need a cleaner evidence-collection, normalization, provenance, monitoring, and export layer that can feed my existing workflow.”
 
 ## Functional contract
 
@@ -29,18 +29,37 @@ A user can:
 
 1. create a project with client/category/keywords/competitors;
 2. start from a brand-monitor / competitor-scan / product-opportunity template;
-3. copy a bounded Harvest plan into an Agent;
-4. validate and ingest one or more Harvest snapshots;
-5. inspect coverage, explicit gaps, capture risk state, source method and confidence;
-6. see auditable rule-based questions, complaints, purchase-intent and positive-feedback queues;
-7. click a recurring lexical term and inspect supporting comments and source notes;
-8. see high-signal notes and source URLs;
-9. see keyword search positions when Harvest includes `queries[].rankingPosition`;
-10. compare two snapshots for new notes, previously-observed/not-currently-observed notes, engagement movers, emerging terms and observed rank changes;
-11. export evidence CSV and a structured Evidence Pack;
-12. generate a client-readable Markdown/printable report;
-13. execute core workflows through the CLI;
-14. run locally or through a hardened non-root container with persistent storage.
+3. copy a bounded Harvest plan or launch a bounded run through an explicitly configured executor adapter;
+4. see persistent run state (`queued`, `running`, `manual_action_required`, `completed`, `failed`, `cancelled`), budgets, gaps, risk state and resulting snapshot;
+5. cancel a still-executing run before its snapshot commit point, or resume a manual/failed run;
+6. create persistent monitoring schedules with a minimum one-hour cadence and overlap protection;
+7. safely fall back to manual handoff when no executor is configured or a platform safety/access state requires intervention;
+8. validate and ingest one or more Harvest snapshots;
+9. inspect coverage, explicit gaps, capture risk state, source method and confidence;
+10. see auditable rule-based questions, complaints, purchase-intent and positive-feedback queues;
+11. click a recurring lexical term and inspect supporting comments and source notes;
+12. see high-signal notes and source URLs;
+13. see keyword search positions when Harvest includes `queries[].rankingPosition`;
+14. compare two snapshots for new notes, previously-observed/not-currently-observed notes, engagement movers, emerging terms and observed rank changes;
+15. export evidence CSV and a structured Evidence Pack;
+16. generate a client-readable Markdown/printable report;
+17. execute core workflows, runs and schedules through the CLI;
+18. run locally or through a hardened non-root container with persistent storage.
+
+## Execution/safety contract
+
+Automatic collection is an adapter boundary, not a promise that Research Studio contains its own unrestricted scraper.
+
+- The server launches only an operator-configured executable with fixed operator-configured arguments and `shell:false`.
+- Project/client text is passed through a JSON stdin protocol, not interpolated into a shell command.
+- Per-run note/comment/runtime budgets are bounded by the Studio before execution.
+- Executor stdout is size-bounded and runtime is time-bounded.
+- `CAPTCHA`, `LOGIN_REQUIRED`, `ACCESS_DENIED`, `BLOCKED`, `THROTTLED`, or `meta.loginRequired=true` force `manual_action_required` instead of auto-continuation.
+- Missing executor configuration produces `manual_action_required`; it never fabricates a successful snapshot.
+- A project may have at most one launching/active run in a Studio process. Concurrent launch requests must not create orphan queued runs.
+- Cancellation is allowed while execution is still safely abortable. Once snapshot commit begins, cancellation is rejected rather than persisting `cancelled` alongside a committed snapshot.
+- On restart, an interrupted `running` state is failed closed because the old child-process result can no longer be trusted.
+- A due schedule advances its next claim before execution and never starts an overlapping run for the same project.
 
 ## Interpretation contract
 
@@ -63,6 +82,9 @@ A build is not “commercially ready” merely because the UI starts or a demo w
 
 - Harvest v2 normalization and validation are internally consistent with the published schema.
 - Notes, comments, authors, queries/rank observations, provenance, risk state and explicit gaps survive the full ingest → storage → analysis → export chain.
+- A configured test executor can complete `plan → run → Harvest v2 → validated snapshot` through the public API.
+- No-executor and platform-hard-stop paths land in explicit manual-action state without creating a fake snapshot.
+- Recurring schedules survive restart, avoid overlap, and produce new snapshots when execution succeeds.
 - Historical snapshots created by older versions remain readable or are explicitly migrated.
 - Snapshot comparison does not turn sampling absence into deletion claims.
 
@@ -71,7 +93,10 @@ A build is not “commercially ready” merely because the UI starts or a demo w
 - Syntax checks pass.
 - Unit/regression/security/compatibility tests pass.
 - API end-to-end smoke passes.
+- A real-browser smoke test covers both the research/report path and the run/schedule safety path.
 - malformed, empty, duplicate and boundary inputs have deterministic behavior.
+- concurrent launch requests cannot create a second orphan run for the same project.
+- cancellation cannot race a persisted snapshot into a contradictory terminal state.
 - storage writes are atomic and corrupt storage is surfaced rather than silently reset.
 - critical export paths are verified.
 - no known P0/P1 defects remain.
@@ -81,8 +106,10 @@ A build is not “commercially ready” merely because the UI starts or a demo w
 - Docker image builds.
 - Runtime is non-root.
 - Compose defaults to localhost exposure and no-new-privileges.
+- The root filesystem can remain read-only while the dedicated data volume is writable.
 - Persistent data remains available after a container restart.
 - health endpoint works without exposing internal filesystem paths.
+- Container validation proves both no-executor fail-safe behavior and a configured test-executor run that persists a snapshot.
 
 ### Evidence quality
 
@@ -108,26 +135,27 @@ A release record should include:
 - exact automated test commands;
 - passed/failed test counts;
 - API end-to-end result;
+- real-browser run/report result;
 - Docker build result;
-- non-root runtime evidence;
+- non-root/read-only runtime evidence;
 - persistence-after-restart result;
+- configured container executor → snapshot result;
 - scale-test workload and measured runtime;
 - example normalized input/output and client export;
 - known limitations and residual risks.
 
 If any required item is unverified, the product should be described as a release candidate rather than complete.
 
-## Next product increments after the hardened local release
+## Next product increments after the controlled-run release
 
 Ordered by expected commercial value:
 
-1. **Direct Agent handoff** — invoke Harvest from a project instead of copy/paste JSON.
-2. **Scheduled monitoring** — run a saved project on a cadence and ingest a new snapshot automatically.
-3. **Grounded LLM synthesis** — decision summaries that cite note/comment IDs and never replace raw evidence.
-4. **Saved alert rules** — e.g. observed rank drops, new complaint group, fast-growing competitor note.
-5. **Shareable client view** — read-only report link with optional agency branding.
-6. **Team/workspace controls** — users, roles, projects and usage budgets.
-7. **Billing** — pilot checkout, recurring plans and usage accounting.
+1. **Grounded LLM synthesis** — decision summaries that cite note/comment IDs, expose counter-evidence, and never replace raw evidence.
+2. **Saved alert rules and digests** — configurable observed-rank drops, complaint growth, new high-signal evidence and capture degradation notifications.
+3. **Shareable client view** — read-only report links with optional agency branding.
+4. **Team/workspace controls** — users, roles, projects, audit log and usage budgets.
+5. **Durable hosted storage / multi-instance coordination** — database/object storage and distributed run locks rather than local JSON/process locks.
+6. **Billing** — pilot checkout, recurring plans, invoices/cancellation and entitlement/usage accounting.
 
 These increments should not be used to postpone fixing release-blocking correctness, evidence, or safety problems in the current local product.
 
