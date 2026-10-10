@@ -226,10 +226,23 @@ export class RunService{
     this.timer.unref?.();
   }
 
-  stop(){
+  async stop({timeoutMs=4_000}={}){
     if(this.timer){clearInterval(this.timer);this.timer=null}
+    const tasks=[...this.activeByProject.values()];
     for(const active of this.abortByProject.values()){
       if(!active.committing)active.controller.abort();
     }
+    if(!tasks.length)return {settled:true,active:0};
+    let timedOut=false;
+    let timer;
+    await Promise.race([
+      Promise.allSettled(tasks),
+      new Promise(resolve=>{
+        timer=setTimeout(()=>{timedOut=true;resolve()},Math.max(100,Number(timeoutMs)||4_000));
+        timer.unref?.();
+      }),
+    ]);
+    if(timer)clearTimeout(timer);
+    return {settled:!timedOut,active:this.activeByProject.size};
   }
 }
