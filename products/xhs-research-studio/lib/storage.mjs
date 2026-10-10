@@ -3,9 +3,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { normalizeHarvest } from './normalize.mjs';
 import { analyze } from './analysis.mjs';
+import { makeIntegrity, verifyIntegrity, IntegrityError } from './integrity.mjs';
 import { HarvestValidationError, validateNormalizedHarvest } from './validation.mjs';
 
 const SAFE_ID_RE = /^[A-Za-z0-9._-]+$/u;
+const SNAPSHOT_SCOPE='xhs-harvest-snapshot-evidence-v1';
 const projectMutationQueues = new Map();
 
 export function makeId(prefix='id') {
@@ -16,18 +18,28 @@ function assertSafeId(value, label='id') {
   if (!SAFE_ID_RE.test(String(value || ''))) throw new HarvestValidationError(`Invalid ${label}.`, [{path:label,message:'Only letters, numbers, dot, underscore and dash are allowed.'}], 400);
 }
 
+function verifySnapshotEvidence(snapshot) {
+  if (!snapshot?.harvest) return {ok:false,unsigned:true,errors:[{path:'harvest',message:'snapshot harvest is missing'}]};
+  if (!snapshot.integrity) return {ok:true,unsigned:true,errors:[]};
+  const result=verifyIntegrity(snapshot.harvest,snapshot.integrity,SNAPSHOT_SCOPE);
+  if(!result.ok) throw new IntegrityError('Stored snapshot evidence failed integrity verification.',result.errors);
+  return {ok:true,unsigned:false,errors:[],digest:result.actualDigest};
+}
+
 function hydrateSnapshot(snapshot) {
   if (!snapshot || !snapshot.harvest) return snapshot;
+  const integrityStatus=verifySnapshotEvidence(snapshot);
   const analysis = snapshot.analysis;
   const stale = !analysis
     || !analysis.methodology
     || !analysis.quality
     || !analysis.engagement?.model
     || !Array.isArray(analysis.evidenceClusters);
-  if (!stale) return snapshot;
+  if (!stale) return {...snapshot,integrityStatus};
   return {
     ...snapshot,
     analysis: analyze(snapshot.harvest),
+    integrityStatus,
     migration: {
       ...(snapshot.migration || {}),
       analysisRecomputedInMemory: true,
@@ -119,15 +131,22 @@ export async function listSnapshots(dataDir, projectId) {
   }
   const out = [];
   for (const file of files) {
-    const snapshot = hydrateSnapshot(await readJson(path.join(dir,file)));
-    if (!snapshot) continue;
-    out.push({
-      id:snapshot.id,
-      createdAt:snapshot.createdAt,
-      source:snapshot.harvest?.source,
-      quality:snapshot.analysis?.quality,
-      coverage:snapshot.analysis?.coverage,
-    });
+    try {
+      const snapshot = hydrateSnapshot(await readJson(path.join(dir,file)));
+      if (!snapshot) continue;
+      out.push({
+        id:snapshot.id,
+        createdAt:snapshot.createdAt,
+        source:snapshot.harvest?.source,
+        quality:snapshot.analysis?.quality,
+        coverage:snapshot.analysis?.coverage,
+        integrity:snapshot.integrity||null,
+        integrityStatus:snapshot.integrityStatus,
+      });
+    } catch(err) {
+      if(!(err instanceof IntegrityError)) throw err;
+      out.push({id:path.basename(file,'.json'),createdAt:null,integrityStatus:{ok:false,unsigned:false,errors:err.details}});
+    }
   }
   out.sort((a,b) => {
     const at = Date.parse(a.createdAt || '') || 0;
@@ -153,9 +172,12 @@ export async function saveSnapshot(dataDir, projectId, raw) {
     projectId,
     createdAt: harvest.source.capturedAt || new Date().toISOString(),
     harvest,
+    integrity:makeIntegrity(harvest,SNAPSHOT_SCOPE),
     validation: { warnings: validation.warnings },
   };
   snapshot.analysis = analyze(harvest);
   await writeJsonAtomic(path.join(dataDir,'snapshots',projectId,`${snapshot.id}.json`), snapshot);
-  return snapshot;
+  return hydrateSnapshot(snapshot);
 }
+
+export const storageIntegrity = Object.freeze({snapshotScope:SNAPSHOT_SCOPE});
