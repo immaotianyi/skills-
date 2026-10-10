@@ -38,10 +38,28 @@ function publicUrl(env=process.env){
   }
   return value;
 }
-
-export async function createStripeCheckoutSession({workspace,user,planId,fetchImpl=fetch,env=process.env}){
+function stripeSecret(env){
   const secret=String(env.XHS_STUDIO_STRIPE_SECRET_KEY||'').trim();
   if(!secret)throw new BillingError('Stripe secret key is not configured.',{code:'BILLING_NOT_CONFIGURED',statusCode:503});
+  return secret;
+}
+async function stripeFormRequest(endpoint,form,{fetchImpl=fetch,env=process.env,errorCode}){
+  const response=await fetchImpl(`https://api.stripe.com${endpoint}`,{
+    method:'POST',
+    headers:{authorization:`Bearer ${stripeSecret(env)}`,'content-type':'application/x-www-form-urlencoded'},
+    body:form.toString(),
+  });
+  const text=await response.text();
+  let data;
+  try{data=JSON.parse(text)}catch{data={}}
+  if(!response.ok){
+    const detail=data?.error?.message||`Stripe returned HTTP ${response.status}`;
+    throw new BillingError(`Stripe request failed: ${detail}`,{code:errorCode,statusCode:502});
+  }
+  return data;
+}
+
+export async function createStripeCheckoutSession({workspace,user,planId,fetchImpl=fetch,env=process.env}){
   const plan=findPlan(planId,env);
   if(!plan.priceId)throw new BillingError(`Stripe price is not configured for plan ${plan.id}.`,{code:'PLAN_NOT_CONFIGURED',statusCode:503});
   const origin=publicUrl(env);
@@ -57,19 +75,22 @@ export async function createStripeCheckoutSession({workspace,user,planId,fetchIm
   form.set('metadata[plan]',plan.id);
   form.set('subscription_data[metadata][workspace_id]',workspace.id);
   form.set('subscription_data[metadata][plan]',plan.id);
-  const response=await fetchImpl('https://api.stripe.com/v1/checkout/sessions',{
-    method:'POST',
-    headers:{authorization:`Bearer ${secret}`,'content-type':'application/x-www-form-urlencoded'},
-    body:form.toString(),
-  });
-  const text=await response.text();
-  let data;
-  try{data=JSON.parse(text)}catch{data={}}
-  if(!response.ok||!data?.id||!data?.url){
-    const detail=data?.error?.message||`Stripe returned HTTP ${response.status}`;
-    throw new BillingError(`Unable to create Stripe Checkout Session: ${detail}`,{code:'STRIPE_CHECKOUT_FAILED',statusCode:502});
-  }
+  const data=await stripeFormRequest('/v1/checkout/sessions',form,{fetchImpl,env,errorCode:'STRIPE_CHECKOUT_FAILED'});
+  if(!data?.id||!data?.url)throw new BillingError('Stripe Checkout Session response is incomplete.',{code:'STRIPE_CHECKOUT_FAILED',statusCode:502});
   return {id:data.id,url:data.url,plan:{id:plan.id,label:plan.label}};
+}
+
+export async function createStripePortalSession({workspace,entitlement,fetchImpl=fetch,env=process.env}){
+  const customerId=String(entitlement?.providerCustomerId||'').trim();
+  if(!customerId)throw new BillingError('This workspace does not have a Stripe customer yet.',{code:'STRIPE_CUSTOMER_REQUIRED',statusCode:409});
+  const origin=publicUrl(env);
+  const form=new URLSearchParams();
+  form.set('customer',customerId);
+  form.set('return_url',`${origin}/?billing=portal-return`);
+  if(env.XHS_STUDIO_STRIPE_PORTAL_CONFIGURATION_ID)form.set('configuration',String(env.XHS_STUDIO_STRIPE_PORTAL_CONFIGURATION_ID));
+  const data=await stripeFormRequest('/v1/billing_portal/sessions',form,{fetchImpl,env,errorCode:'STRIPE_PORTAL_FAILED'});
+  if(!data?.id||!data?.url)throw new BillingError('Stripe Billing Portal Session response is incomplete.',{code:'STRIPE_PORTAL_FAILED',statusCode:502});
+  return {id:data.id,url:data.url,workspaceId:workspace.id};
 }
 
 function safeHexEqual(a,b){
