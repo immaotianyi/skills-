@@ -329,13 +329,18 @@ const server=http.createServer(async(req,res)=>{
 server.listen(PORT,HOST,()=>console.log(`XHS Research Studio ${VERSION} running at http://${HOST}:${PORT}`));
 
 let shuttingDown=false;
-function shutdown(signal){
+async function shutdown(signal){
   if(shuttingDown)return;
   shuttingDown=true;
-  console.log(`XHS Research Studio received ${signal}; stopping scheduler and active executors.`);
-  runService.stop();
-  server.close(()=>process.exit(0));
-  setTimeout(()=>process.exit(1),5_000).unref();
+  console.log(`XHS Research Studio received ${signal}; stopping new requests, scheduler, and active executors.`);
+  const hardExit=setTimeout(()=>process.exit(1),5_000);
+  hardExit.unref();
+  server.close();
+  server.closeIdleConnections?.();
+  const result=await runService.stop({timeoutMs:4_000});
+  if(!result.settled)console.error(`Run shutdown timed out with ${result.active} active task(s).`);
+  clearTimeout(hardExit);
+  process.exit(result.settled?0:1);
 }
-process.once('SIGTERM',()=>shutdown('SIGTERM'));
-process.once('SIGINT',()=>shutdown('SIGINT'));
+process.once('SIGTERM',()=>{void shutdown('SIGTERM')});
+process.once('SIGINT',()=>{void shutdown('SIGINT')});
