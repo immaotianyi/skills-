@@ -26,6 +26,12 @@ test('branding UI only mutates workspace branding and enforces strict client-sid
   assert.doesNotMatch(source,/logoUrl|innerHTML\s*=\s*branding/u);
 });
 
+test('branding editor stays compatible with the main app strict style-src self CSP',()=>{
+  assert.doesNotMatch(source,/\sstyle=/u);
+  assert.doesNotMatch(source,/\.style\s*[.=]/u);
+  assert.match(source,/强调色：\$\{esc\(accent\)\}/u);
+});
+
 test('branding UI escapes every persisted text field rendered into markup',()=>{
   assert.match(source,/esc\(branding\.agencyName/u);
   assert.match(source,/esc\(branding\.reportTitle/u);
