@@ -25,7 +25,7 @@ async function waitForHealth(base) {
   throw new Error('server did not become healthy');
 }
 
-test('CLI/API covers delivery flow, concurrent writes, and request limits', {timeout:20000}, async () => {
+test('CLI/API covers delivery flow, run safety, schedules, concurrent writes, and request limits', {timeout:25000}, async () => {
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-cli-e2e-'));
   const outDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-cli-out-'));
   const port=56000+Math.floor(Math.random()*500);
@@ -43,6 +43,8 @@ test('CLI/API covers delivery flow, concurrent writes, and request limits', {tim
     await waitForHealth(base);
     const health=JSON.parse(await run('health'));
     assert.equal(health.ok,true);
+    const runSystem=JSON.parse(await run('run-system'));
+    assert.equal(runSystem.executorConfigured,false);
 
     const validation=JSON.parse(await run('validate',demoPath));
     assert.equal(validation.ok,true);
@@ -50,6 +52,28 @@ test('CLI/API covers delivery flow, concurrent writes, and request limits', {tim
 
     const project=JSON.parse(await run('create','--name','CLI E2E','--keywords','防晒,敏感肌','--competitors','A,B'));
     assert.ok(project.id);
+
+    const launch=JSON.parse(await run('run',project.id,'--max-notes','20','--max-comments','100','--max-seconds','30'));
+    assert.ok(launch.run.id);
+    let manualRun=null;
+    for(let i=0;i<80;i++){
+      manualRun=JSON.parse(await run('run-get',project.id,launch.run.id)).run;
+      if(manualRun.state==='manual_action_required')break;
+      await sleep(25);
+    }
+    assert.equal(manualRun.state,'manual_action_required');
+    assert.equal(manualRun.riskState,'EXECUTOR_NOT_CONFIGURED');
+    assert.equal(manualRun.snapshotId,null);
+    const runList=JSON.parse(await run('runs',project.id));
+    assert.ok(runList.runs.some(row=>row.id===launch.run.id));
+
+    const schedule=JSON.parse(await run('schedule-create',project.id,'--interval-minutes','60','--start-at',new Date(Date.now()+3600_000).toISOString(),'--max-notes','25')).schedule;
+    assert.equal(schedule.intervalMinutes,60);
+    const schedules=JSON.parse(await run('schedules',project.id));
+    assert.ok(schedules.schedules.some(row=>row.id===schedule.id));
+    const disabled=JSON.parse(await run('schedule-update',project.id,schedule.id,'--enabled','false')).schedule;
+    assert.equal(disabled.enabled,false);
+
     const ingest=JSON.parse(await run('ingest',project.id,demoPath));
     assert.equal(ingest.analysis.coverage.notes,3);
 
