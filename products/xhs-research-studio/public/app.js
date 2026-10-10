@@ -98,6 +98,7 @@ async function openProject(id) {
   $('#projectView').hidden = false;
   $('#projectName').textContent = current.project.name;
   $('#projectMeta').textContent = [current.project.client,current.project.category].filter(Boolean).join(' · ') || 'PROJECT';
+  window.dispatchEvent(new CustomEvent('xhs:project-opened',{detail:{projectId:current.project.id,project:current.project}}));
   const snapshots = current.snapshots || [];
   if (!snapshots.length) {
     currentSnapshot = null;
