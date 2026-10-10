@@ -18,6 +18,17 @@ function harvest(capturedAt='2026-10-10T00:00:00Z'){
   };
 }
 
+function captureEnv(names){
+  return Object.fromEntries(names.map(name=>[name,Object.prototype.hasOwnProperty.call(process.env,name)?process.env[name]:undefined]));
+}
+
+function restoreEnv(saved){
+  for(const [name,value] of Object.entries(saved)){
+    if(value===undefined) delete process.env[name];
+    else process.env[name]=value;
+  }
+}
+
 test('canonical checksum is stable across object key order and detects mutation without claiming authentication',()=>{
   const a={b:2,a:{y:2,x:1}};
   const b={a:{x:1,y:2},b:2};
@@ -43,6 +54,45 @@ test('HMAC integrity authenticates with the external key and fails with missing 
   assert.equal(verified.checksumOnly,false);
   assert.equal(verifyIntegrity(value,integrity,'hmac-test').ok,false);
   assert.equal(verifyIntegrity(value,integrity,'hmac-test',{key:'wrong-key-value-long-enough-for-this-unit-case',keyId:'unit-v1'}).ok,false);
+});
+
+test('snapshot HMAC key rotation verifies historical records from a read-only keyring without changing the current write key',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-rotation-'));
+  const names=['XHS_STUDIO_INTEGRITY_KEY','XHS_STUDIO_INTEGRITY_KEY_ID','XHS_STUDIO_INTEGRITY_KEYRING'];
+  const saved=captureEnv(names);
+  const oldKey='snapshot-old-key-material-at-least-32-bytes-2026';
+  const newKey='snapshot-new-key-material-at-least-32-bytes-2026';
+  try{
+    process.env.XHS_STUDIO_INTEGRITY_KEY=oldKey;
+    process.env.XHS_STUDIO_INTEGRITY_KEY_ID='snapshot-old-v1';
+    delete process.env.XHS_STUDIO_INTEGRITY_KEYRING;
+    const oldSnapshot=await saveSnapshot(dir,'prj_rotate',harvest('2026-10-10T00:00:00Z'));
+    assert.equal(oldSnapshot.integrity.algorithm,'hmac-sha256');
+    assert.equal(oldSnapshot.integrity.keyId,'snapshot-old-v1');
+
+    process.env.XHS_STUDIO_INTEGRITY_KEY=newKey;
+    process.env.XHS_STUDIO_INTEGRITY_KEY_ID='snapshot-new-v2';
+    process.env.XHS_STUDIO_INTEGRITY_KEYRING=JSON.stringify({'snapshot-old-v1':oldKey});
+
+    const loadedOld=await loadSnapshot(dir,'prj_rotate',oldSnapshot.id);
+    assert.equal(loadedOld.integrityStatus.verified,true);
+    assert.equal(loadedOld.integrityStatus.authenticated,true);
+    assert.equal(loadedOld.integrityStatus.keyId,'snapshot-old-v1');
+
+    const newSnapshot=await saveSnapshot(dir,'prj_rotate',harvest('2026-10-11T00:00:00Z'));
+    assert.equal(newSnapshot.integrity.keyId,'snapshot-new-v2');
+    assert.equal(newSnapshot.integrityStatus.authenticated,true);
+
+    delete process.env.XHS_STUDIO_INTEGRITY_KEYRING;
+    await assert.rejects(()=>loadSnapshot(dir,'prj_rotate',oldSnapshot.id),IntegrityError);
+    assert.equal((await loadSnapshot(dir,'prj_rotate',newSnapshot.id)).integrityStatus.authenticated,true);
+
+    process.env.XHS_STUDIO_INTEGRITY_KEYRING=JSON.stringify({'snapshot-old-v1':'wrong-historical-key-material-at-least-32-bytes'});
+    await assert.rejects(()=>loadSnapshot(dir,'prj_rotate',oldSnapshot.id),IntegrityError);
+  } finally {
+    restoreEnv(saved);
+    await fs.rm(dir,{recursive:true,force:true});
+  }
 });
 
 test('v2 snapshot integrity protects raw evidence, derived analysis, validation and metadata',async()=>{
