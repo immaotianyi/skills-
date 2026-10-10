@@ -58,7 +58,7 @@
     let mode='login';const form=gate.querySelector('#hostedAuthForm'),workspace=form.elements.workspaceName,submit=gate.querySelector('#authSubmit'),error=gate.querySelector('#hostedAuthError');
     const setMode=next=>{mode=next;workspace.hidden=next!=='register';submit.textContent=next==='register'?'注册并创建 Workspace':'登录';error.textContent='';gate.querySelector('#authLoginTab').className=next==='login'?'':'secondary';gate.querySelector('#authRegisterTab').className=next==='register'?'':'secondary'};
     gate.querySelector('#authLoginTab').onclick=()=>setMode('login');gate.querySelector('#authRegisterTab').onclick=()=>setMode('register');
-    form.onsubmit=async event=>{event.preventDefault();error.textContent='';const data=new FormData(form);try{await post(`/api/auth/${mode}`,{email:data.get('email'),password:data.get('password'),workspaceName:data.get('workspaceName')});me=(await raw('/api/me')).body;gate.hidden=true;selectWorkspace();renderHostedBar();renderPanel();resolveReady()}catch(err){error.textContent=err.message}};
+    form.onsubmit=async event=>{event.preventDefault();error.textContent='';const data=new FormData(form);try{const result=await post(`/api/auth/${mode}`,{email:data.get('email'),password:data.get('password'),workspaceName:data.get('workspaceName')});me={user:result.body.user,session:result.body.session,workspaces:result.body.workspaces};gate.hidden=true;selectWorkspace();renderHostedBar();renderPanel();resolveReady()}catch(err){error.textContent=err.message}};
     return gate;
   }
 
@@ -71,12 +71,13 @@
   function activeWorkspace(){return (me?.workspaces||[]).find(w=>w.id===workspaceId)||null}
   function roleCanManage(){return ['owner','admin'].includes(activeWorkspace()?.role)}
   function roleCanWrite(){return ['owner','admin','analyst'].includes(activeWorkspace()?.role)}
+  async function refreshMe(){me=(await raw('/api/me')).body;selectWorkspace();renderHostedBar();return me}
 
   function ensureShell(){
     if(document.getElementById('hostedBar'))return;
     document.body.insertAdjacentHTML('afterbegin',`<div id="hostedBar"><strong>Hosted</strong><select id="hostedWorkspace"></select><small id="hostedPlan"></small><span class="hostedGrow"></span><button type="button" id="hostedProjectActions" class="secondary">项目操作</button><button type="button" id="hostedAccount" class="secondary">账户 / 团队</button><button type="button" id="hostedLogout" class="secondary">退出</button></div><div id="hostedPanel" hidden></div><div id="hostedToast" hidden></div>`);
     document.getElementById('hostedPanel').addEventListener('click',event=>event.stopPropagation());
-    document.getElementById('hostedAccount').onclick=()=>{const p=document.getElementById('hostedPanel');p.hidden=!p.hidden;if(!p.hidden)renderPanel()};
+    document.getElementById('hostedAccount').onclick=async()=>{const p=document.getElementById('hostedPanel');p.hidden=false;try{await refreshMe();await renderPanel()}catch(err){toast(err.message)}};
     document.getElementById('hostedProjectActions').onclick=()=>{const p=document.getElementById('hostedPanel');p.hidden=false;renderProjectActions()};
     document.getElementById('hostedLogout').onclick=async()=>{try{await post('/api/auth/logout',{})}finally{localStorage.removeItem('xhs-studio-workspace');location.reload()}};
   }
@@ -129,9 +130,7 @@
       const response=await nativeFetch('/api/hosted/status');
       if(!response.ok)throw new Error(`Hosted status failed: HTTP ${response.status}`);
       status=await response.json();if(!status?.hosted){resolveReady();return}hosted=true;ensureShell();
-      const meResponse=await nativeFetch('/api/me');
-      if(meResponse.ok){me=await meResponse.json();selectWorkspace();renderHostedBar();resolveReady();return}
-      if(meResponse.status!==401)throw new Error(`Hosted session check failed: HTTP ${meResponse.status}`);
+      if(status.session){me=status.session;selectWorkspace();renderHostedBar();resolveReady();return}
       authGate().hidden=false;
     }catch(error){console.error(error);toast(`Hosted 初始化失败：${error.message}`);resolveReady()}
   }
