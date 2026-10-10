@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizeHarvest, safeText } from './lib/normalize.mjs';
 import { analyze, diffHarvest, evidenceClusters, rankingSummary, markdownReport } from './lib/analysis.mjs';
 import { HarvestValidationError, validateHarvestInput, validateNormalizedHarvest } from './lib/validation.mjs';
-import { ensureData, getProjects, saveProjects, getProject, listSnapshots, loadSnapshot, saveSnapshot, makeId } from './lib/storage.mjs';
+import { ensureData, getProjects, mutateProjects, getProject, listSnapshots, loadSnapshot, saveSnapshot, makeId } from './lib/storage.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.XHS_STUDIO_DATA || path.join(__dirname, 'data');
@@ -159,15 +159,13 @@ async function api(req,res,url) {
     const name=safeText(b.name);
     if (!name) throw new HttpError(400,'Project name is required.');
     if (name.length>120) throw new HttpError(400,'Project name must be 120 characters or fewer.');
-    const projects=await getProjects(DATA_DIR);
     const p={
       id:makeId('prj'), slug:slug(name), name,
       client:safeText(b.client).slice(0,120), category:safeText(b.category).slice(0,120),
       keywords:cleanList(b.keywords), competitors:cleanList(b.competitors),
       createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(),
     };
-    projects.push(p);
-    await saveProjects(DATA_DIR,projects);
+    await mutateProjects(DATA_DIR,projects=>{projects.push(p);return p;});
     return send(res,201,p);
   }
   if (url.pathname==='/api/validate' && req.method==='POST') {
@@ -197,10 +195,12 @@ async function api(req,res,url) {
       if (!inputValidation.ok) throw new HarvestValidationError('Invalid Harvest payload.',inputValidation.errors,400);
       const snap=await saveSnapshot(DATA_DIR,project.id,raw);
       snap.validation.inputWarnings = inputValidation.warnings;
-      const projects=await getProjects(DATA_DIR);
-      const i=projects.findIndex(p=>p.id===project.id);
-      projects[i]={...projects[i],updatedAt:new Date().toISOString(),lastSnapshotAt:snap.createdAt};
-      await saveProjects(DATA_DIR,projects);
+      await mutateProjects(DATA_DIR,projects=>{
+        const i=projects.findIndex(p=>p.id===project.id);
+        if (i < 0) throw new HttpError(404,'project not found');
+        projects[i]={...projects[i],updatedAt:new Date().toISOString(),lastSnapshotAt:snap.createdAt};
+        return projects[i];
+      });
       return send(res,201,snap);
     }
     if (parts[3]==='snapshots' && parts.length===4 && req.method==='GET') return send(res,200,{snapshots:await listSnapshots(DATA_DIR,project.id)});
