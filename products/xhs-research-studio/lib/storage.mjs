@@ -15,6 +15,25 @@ function assertSafeId(value, label='id') {
   if (!SAFE_ID_RE.test(String(value || ''))) throw new HarvestValidationError(`Invalid ${label}.`, [{path:label,message:'Only letters, numbers, dot, underscore and dash are allowed.'}], 400);
 }
 
+function hydrateSnapshot(snapshot) {
+  if (!snapshot || !snapshot.harvest) return snapshot;
+  const analysis = snapshot.analysis;
+  const stale = !analysis
+    || !analysis.methodology
+    || !analysis.quality
+    || !analysis.engagement?.model
+    || !Array.isArray(analysis.evidenceClusters);
+  if (!stale) return snapshot;
+  return {
+    ...snapshot,
+    analysis: analyze(snapshot.harvest),
+    migration: {
+      ...(snapshot.migration || {}),
+      analysisRecomputedInMemory: true,
+    },
+  };
+}
+
 export async function ensureData(dataDir) {
   await fs.mkdir(dataDir, {recursive:true});
   await fs.mkdir(path.join(dataDir,'snapshots'), {recursive:true});
@@ -84,7 +103,7 @@ export async function listSnapshots(dataDir, projectId) {
   }
   const out = [];
   for (const file of files) {
-    const snapshot = await readJson(path.join(dir,file));
+    const snapshot = hydrateSnapshot(await readJson(path.join(dir,file)));
     if (!snapshot) continue;
     out.push({
       id:snapshot.id,
@@ -105,7 +124,7 @@ export async function listSnapshots(dataDir, projectId) {
 export async function loadSnapshot(dataDir, projectId, snapshotId) {
   assertSafeId(projectId, 'projectId');
   assertSafeId(snapshotId, 'snapshotId');
-  return await readJson(path.join(dataDir,'snapshots',projectId,`${snapshotId}.json`), null);
+  return hydrateSnapshot(await readJson(path.join(dataDir,'snapshots',projectId,`${snapshotId}.json`), null));
 }
 
 export async function saveSnapshot(dataDir, projectId, raw) {
