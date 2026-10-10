@@ -32,11 +32,13 @@ test('new snapshots are signed and tampering fails closed while legacy unsigned 
     await ensureData(dir);
     const snapshot=await saveSnapshot(dir,'prj_test',harvest());
     assert.equal(snapshot.integrity.algorithm,'sha256');
-    assert.equal(snapshot.integrityStatus.ok,true);
+    assert.equal(snapshot.integrityStatus.verified,true);
     assert.equal(snapshot.integrityStatus.unsigned,false);
+    assert.ok(Array.isArray(snapshot.validation.inputWarnings));
 
     const file=path.join(dir,'snapshots','prj_test',`${snapshot.id}.json`);
     const stored=JSON.parse(await fs.readFile(file,'utf8'));
+    assert.ok(Array.isArray(stored.validation.inputWarnings));
     stored.harvest.notes[0].title='被修改';
     await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
     await assert.rejects(()=>loadSnapshot(dir,'prj_test',snapshot.id),IntegrityError);
@@ -45,7 +47,7 @@ test('new snapshots are signed and tampering fails closed while legacy unsigned 
     delete stored.integrity;
     await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
     const legacy=await loadSnapshot(dir,'prj_test',snapshot.id);
-    assert.equal(legacy.integrityStatus.ok,true);
+    assert.equal(legacy.integrityStatus.verified,false);
     assert.equal(legacy.integrityStatus.unsigned,true);
   } finally {
     await fs.rm(dir,{recursive:true,force:true});
