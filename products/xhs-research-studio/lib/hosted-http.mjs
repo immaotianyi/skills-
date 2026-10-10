@@ -85,7 +85,9 @@ export async function handleHostedApi({req,res,url,store,readJson,readRaw,send,g
       const workspace=store.requireRole(session.user.id,workspaceId);return send(res,200,{workspace,entitlement:store.getEntitlement(workspaceId),usage:store.usage(workspaceId)});
     }
     if(parts[3]==='billing'&&parts[4]==='checkout'&&req.method==='POST'){
-      assertSameOrigin(req,env);const workspace=store.requireRole(session.user.id,workspaceId,['owner','admin']),body=await readJson(req),checkout=await createStripeCheckoutSession({workspace,user:session.user,planId:body.plan,env});
+      assertSameOrigin(req,env);
+      const workspace=store.requireRole(session.user.id,workspaceId,['owner','admin']),body=await readJson(req),entitlement=store.getEntitlement(workspaceId);
+      const checkout=await createStripeCheckoutSession({workspace,user:session.user,planId:body.plan,entitlement,env});
       store.audit({workspaceId,userId:session.user.id,action:'billing.checkout.create',targetType:'workspace',targetId:workspaceId,metadata:{plan:checkout.plan.id,sessionId:checkout.id}});return send(res,201,checkout);
     }
     if(parts[3]==='billing'&&parts[4]==='portal'&&req.method==='POST'){
