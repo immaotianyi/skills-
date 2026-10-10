@@ -16,7 +16,7 @@ const PORT = Number(process.env.PORT || 5418);
 const HOST = process.env.HOST || '127.0.0.1';
 const configuredBodyLimit = Number(process.env.XHS_STUDIO_MAX_BODY || 15_000_000);
 const MAX_BODY_BYTES = Number.isFinite(configuredBodyLimit) && configuredBodyLimit > 0 ? configuredBodyLimit : 15_000_000;
-const VERSION = '0.4.0-evidence-pack-api';
+const VERSION = '0.3.0-hardening';
 
 const PROJECT_TEMPLATES = [
   {id:'brand-monitor',name:'品牌监控',description:'品牌 + 竞品 + 搜索词的周期性变化',keywords:['品牌词','品类核心词','品牌+避雷','品牌+平替'],competitors:['竞品A','竞品B','竞品C']},
