@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { HostedStoreError } from './hosted-db.mjs';
 
 const ACTIVE_STRIPE_STATUSES=new Set(['active','trialing']);
+const TERMINAL_SUBSCRIPTION_STATUSES=new Set(['canceled','incomplete_expired']);
 
 export class BillingError extends Error{
   constructor(message,{code='BILLING_ERROR',statusCode=400}={}){super(message);this.code=code;this.statusCode=statusCode}
@@ -59,7 +60,24 @@ async function stripeFormRequest(endpoint,form,{fetchImpl=fetch,env=process.env,
   return data;
 }
 
-export async function createStripeCheckoutSession({workspace,user,planId,fetchImpl=fetch,env=process.env}){
+export function checkoutEligibility(entitlement={}){
+  const subscriptionId=String(entitlement?.providerSubscriptionId||'').trim();
+  const status=String(entitlement?.status||'inactive').trim();
+  const existingManagedSubscription=Boolean(subscriptionId&&!TERMINAL_SUBSCRIPTION_STATUSES.has(status));
+  return {
+    allowed:!existingManagedSubscription,
+    usePortal:existingManagedSubscription,
+    customerId:String(entitlement?.providerCustomerId||'').trim()||null,
+    subscriptionId:subscriptionId||null,
+    status,
+  };
+}
+
+export async function createStripeCheckoutSession({workspace,user,planId,entitlement={},fetchImpl=fetch,env=process.env}){
+  const eligibility=checkoutEligibility(entitlement);
+  if(!eligibility.allowed){
+    throw new BillingError('This workspace already has a managed Stripe subscription. Use the Billing Portal to change plan, update payment details, view invoices, or cancel.',{code:'STRIPE_SUBSCRIPTION_EXISTS',statusCode:409});
+  }
   const plan=findPlan(planId,env);
   if(!plan.priceId)throw new BillingError(`Stripe price is not configured for plan ${plan.id}.`,{code:'PLAN_NOT_CONFIGURED',statusCode:503});
   const origin=publicUrl(env);
@@ -68,7 +86,7 @@ export async function createStripeCheckoutSession({workspace,user,planId,fetchIm
   form.set('success_url',`${origin}/?billing=success`);
   form.set('cancel_url',`${origin}/?billing=cancelled`);
   form.set('client_reference_id',workspace.id);
-  form.set('customer_email',user.email);
+  if(eligibility.customerId)form.set('customer',eligibility.customerId);else form.set('customer_email',user.email);
   form.set('line_items[0][price]',plan.priceId);
   form.set('line_items[0][quantity]','1');
   form.set('metadata[workspace_id]',workspace.id);
@@ -173,4 +191,4 @@ export function assertBillingOwner(store,userId,workspaceId){
   catch(error){if(error instanceof HostedStoreError)throw error;throw new BillingError(error.message)}
 }
 
-export const billingStatus=Object.freeze({activeStatuses:[...ACTIVE_STRIPE_STATUSES]});
+export const billingStatus=Object.freeze({activeStatuses:[...ACTIVE_STRIPE_STATUSES],terminalSubscriptionStatuses:[...TERMINAL_SUBSCRIPTION_STATUSES]});
