@@ -1,4 +1,4 @@
-import { createRun, getRun, listRuns, transitionRun, requeueRun, RUN_STATES } from './runs.mjs';
+import { createRun, getRun, listRuns, transitionRun, requeueRun, RUN_STATES, normalizeRunBudget } from './runs.mjs';
 import { executorConfigured, runConfiguredExecutor } from './executor.mjs';
 import { claimDueSchedules, createSchedule, getSchedule, listSchedules, recordScheduleRun, updateSchedule } from './schedules.mjs';
 import { getProject, getProjects, listSnapshots, loadSnapshot, mutateProjects, saveSnapshot } from './storage.mjs';
@@ -39,8 +39,9 @@ function executorHarvestWithinBudget(raw,budget){
 }
 
 export class RunService{
-  constructor(dataDir,{schedulerTickMs}={}){
+  constructor(dataDir,{schedulerTickMs,policy=null}={}){
     this.dataDir=dataDir;
+    this.policy=policy;
     this.activeByProject=new Map();
     this.abortByProject=new Map();
     this.launchingProjects=new Set();
@@ -55,6 +56,7 @@ export class RunService{
     return {
       executorConfigured:executorConfigured(),
       schedulerTickMs:this.schedulerTickMs,
+      policyConfigured:Boolean(this.policy),
       activeProjects:[...new Set([...this.launchingProjects,...this.activeByProject.keys()])],
     };
   }
@@ -66,11 +68,17 @@ export class RunService{
   async createSchedule(projectId,input){return createSchedule(this.dataDir,projectId,input)}
   async updateSchedule(scheduleId,patch){return updateSchedule(this.dataDir,scheduleId,patch)}
 
+  async #beforeRun(project,meta){
+    if(this.policy?.beforeRun)await this.policy.beforeRun(project,meta);
+  }
+
   async launch(project,{budget={},trigger='manual',scheduleId=null}={}){
     if(this.#busy(project.id))throw new RunServiceError(409,'A Harvest run is already active or launching for this project.','RUN_BUSY');
     this.launchingProjects.add(project.id);
     try{
-      const run=await createRun(this.dataDir,project,{budget,trigger,scheduleId});
+      const normalizedBudget=normalizeRunBudget(budget);
+      await this.#beforeRun(project,{budget:normalizedBudget,trigger,scheduleId,resume:false});
+      const run=await createRun(this.dataDir,project,{budget:normalizedBudget,trigger,scheduleId});
       this.execute(project,run).catch(()=>{});
       return run;
     }finally{
@@ -82,6 +90,9 @@ export class RunService{
     if(this.#busy(project.id))throw new RunServiceError(409,'A Harvest run is already active or launching for this project.','RUN_BUSY');
     this.launchingProjects.add(project.id);
     try{
+      const existing=await getRun(this.dataDir,project.id,runId);
+      if(!existing)throw new RunServiceError(404,'run not found','RUN_NOT_FOUND');
+      await this.#beforeRun(project,{budget:existing.budget,trigger:'resume',scheduleId:existing.scheduleId||null,resume:true,runId});
       const queued=await requeueRun(this.dataDir,project.id,runId);
       this.execute(project,queued).catch(()=>{});
       return queued;
@@ -129,9 +140,6 @@ export class RunService{
       const latestAfterExecutor=await getRun(this.dataDir,project.id,current.id);
       if(latestAfterExecutor?.state===RUN_STATES.CANCELLED)return latestAfterExecutor;
       if(result.status==='manual_action_required'){
-        // A scheduled run must never automatically retry after a platform/access
-        // safety stop. Pause the persisted schedule before recording the manual
-        // handoff so a later cadence requires an explicit operator re-enable.
         if(current.scheduleId)await updateSchedule(this.dataDir,current.scheduleId,{enabled:false});
         current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.MANUAL_ACTION_REQUIRED,{
           riskState:result.riskState||'BLOCKED',gaps:result.gaps||[],stoppedBecause:result.reason||'Manual action required.',
@@ -140,7 +148,8 @@ export class RunService{
         return current;
       }
 
-      executorHarvestWithinBudget(result.harvest,current.budget);
+      const actual=executorHarvestWithinBudget(result.harvest,current.budget);
+      if(this.policy?.afterCollect)await this.policy.afterCollect(project,current,actual);
 
       if(active)active.committing=true;
       const before=await listSnapshots(this.dataDir,project.id);
@@ -170,6 +179,7 @@ export class RunService{
         attention,
       });
       if(current.scheduleId)await recordScheduleRun(this.dataDir,current.scheduleId,{runId:current.id,state:current.state});
+      if(this.policy?.afterComplete)await this.policy.afterComplete(project,current,snapshot).catch?.(()=>{});
       return current;
     }catch(error){
       const latest=await getRun(this.dataDir,project.id,current.id).catch(()=>null);
@@ -201,6 +211,8 @@ export class RunService{
       try{
         await this.launch(project,{budget:schedule.budget,trigger:'schedule',scheduleId:schedule.id});
       }catch(error){
+        const directive=this.policy?.scheduledLaunchError?await this.policy.scheduledLaunchError(project,schedule,error):null;
+        if(directive?.disableSchedule)await updateSchedule(this.dataDir,schedule.id,{enabled:false}).catch(()=>{});
         await recordScheduleRun(this.dataDir,schedule.id,{state:'launch_failed',error});
       }
     }
