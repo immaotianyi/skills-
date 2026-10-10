@@ -2,7 +2,7 @@
 
 A zero-dependency local product layer above `xiaohongshu-harvest`.
 
-Harvest reads public or user-authorized Xiaohongshu evidence and emits structured JSON. Research Studio validates and normalizes those snapshots, preserves provenance and coverage limits, compares change, exposes analyst-triage signals, and produces reusable client deliverables.
+Harvest reads public or user-authorized Xiaohongshu evidence and emits structured JSON. Research Studio validates and normalizes those snapshots, preserves provenance and coverage limits, compares change, exposes analyst-triage signals, runs a controlled Harvest executor adapter when one is explicitly configured, schedules recurring monitoring, and produces reusable client deliverables.
 
 ## Run
 
@@ -27,13 +27,56 @@ docker compose up --build
 # open http://127.0.0.1:5418
 ```
 
-The container runs as a non-root user. Compose binds the service to localhost, uses a read-only root filesystem, enables `no-new-privileges`, and stores projects/snapshots in the persistent `xhs_studio_data` volume.
+The container runs as a non-root user. Compose binds the service to localhost, uses a read-only root filesystem, enables `no-new-privileges`, and stores projects/snapshots/runs/schedules in the persistent `xhs_studio_data` volume.
+
+## Controlled Harvest execution
+
+Research Studio now has a persistent run state machine and scheduler. It still does **not** contain an anti-detection scraper or any CAPTCHA/login/access-control bypass. Automatic execution is enabled only when an operator deliberately configures an external executor that already has a lawful, public or user-authorized read-only way to produce Harvest v2 JSON.
+
+If no executor is configured, creating a run is still safe and useful: the run transitions to `manual_action_required` with `riskState: EXECUTOR_NOT_CONFIGURED`, and the existing manual ingest flow remains available. The product never converts missing automation into a fake successful snapshot.
+
+Configure an executor with:
+
+```bash
+export XHS_STUDIO_HARVEST_EXECUTOR='/absolute/path/to/executable'
+export XHS_STUDIO_HARVEST_EXECUTOR_ARGS='["optional","fixed","args"]'
+node products/xhs-research-studio/server.mjs
+```
+
+The executable receives exactly one JSON run plan on stdin and must emit exactly one JSON object on stdout. The plan contains project keywords/competitors, bounded sample budgets, and immutable safety instructions. A successful response is:
+
+```json
+{"status":"completed","harvest":{"schemaVersion":"xhs-harvest/2.0"}}
+```
+
+A blocked/manual response is:
+
+```json
+{"status":"manual_action_required","reason":"Login required","riskState":"LOGIN_REQUIRED","gaps":["..."]}
+```
+
+The server launches the configured executable with `shell:false`, fixed operator-supplied arguments, a small environment allowlist, a runtime timeout, and an output-size limit. Project/client text is sent only through stdin JSON and is never interpolated into a shell command. `CAPTCHA`, `LOGIN_REQUIRED`, `ACCESS_DENIED`, `BLOCKED`, `THROTTLED`, or `meta.loginRequired=true` always become `manual_action_required`; they are never auto-bypassed or auto-ingested as a normal completed run.
+
+A running executor can be cancelled. Cancellation sends an abort signal to the child process, persists `cancelled`, and prevents a late child result from racing the run back to `completed` or `failed`.
+
+### Scheduled monitoring
+
+Schedules are persisted in `/data/schedules.json` and survive restarts. The minimum supported interval is 60 minutes; the maximum is one year. `XHS_STUDIO_SCHEDULER_TICK_MS` controls how often the local scheduler checks for due work (default 30 seconds); it does **not** permit schedules more frequent than 60 minutes.
+
+When a schedule is claimed, `nextRunAt` is advanced before execution so a process restart does not repeatedly claim the same due occurrence. Only one run per project may be active at a time; a due schedule is recorded as `skipped_overlap` rather than creating overlapping collection. If the server restarts while a run is marked `running`, that run is failed closed with `SERVER_RESTART` because the old child result can no longer be trusted. At most one queued run per project is resumed during recovery.
+
+For containers, `XHS_STUDIO_HARVEST_EXECUTOR` must name an executable that actually exists inside the image (or a deliberately mounted executable). Merely setting a host path that is not present inside the container will fail closed with an executor-start error.
 
 ## Product capabilities
 
 - Project model: client, category, keywords, competitors
 - Built-in templates: brand monitoring, competitor scan, product opportunity
 - Harvest input validation + normalization (legacy-compatible input, strict Harvest v2 contract)
+- Controlled executor adapter: `plan -> run -> Harvest v2 -> validated snapshot ingest`
+- Persistent run states: queued, running, manual-action-required, completed, failed, cancelled
+- Bounded per-run notes/comments/time budgets, timeout, output limits, cancellation, restart recovery
+- Persistent scheduled monitoring with overlap protection and explicit last-run state
+- Automatic snapshot creation and diff/attention alerts after successful executor runs
 - First-class notes + comments
 - Snapshot history with atomic JSON writes
 - Serialized in-process project mutations to prevent lost updates under concurrent requests
@@ -154,6 +197,7 @@ Even when those machine gates pass, the evaluator intentionally does not self-ap
 ## API
 
 - `GET /api/health`
+- `GET /api/run-system`
 - `GET /api/templates`
 - `GET|POST /api/projects`
 - `POST /api/validate`
@@ -161,6 +205,13 @@ Even when those machine gates pass, the evaluator intentionally does not self-ap
 - `GET /api/projects/:id`
 - `GET /api/projects/:id/plan`
 - `POST /api/projects/:id/ingest`
+- `GET|POST /api/projects/:id/runs`
+- `GET /api/projects/:id/runs/:runId`
+- `POST /api/projects/:id/runs/:runId/resume`
+- `POST /api/projects/:id/runs/:runId/cancel`
+- `GET|POST /api/projects/:id/schedules`
+- `GET|PATCH /api/projects/:id/schedules/:scheduleId`
+- `POST /api/projects/:id/schedules/:scheduleId/run-now`
 - `GET /api/projects/:id/snapshots`
 - `GET /api/projects/:id/snapshots/:snapshotId`
 - `GET /api/projects/:id/diff?from=&to=`
@@ -181,12 +232,22 @@ With the server running:
 
 ```bash
 node products/xhs-research-studio/cli.mjs health
+node products/xhs-research-studio/cli.mjs run-system
 node products/xhs-research-studio/cli.mjs projects
 node products/xhs-research-studio/cli.mjs validate harvest.json
 node products/xhs-research-studio/cli.mjs analyze harvest.json
 node products/xhs-research-studio/cli.mjs create --name "Brand Monitor" --keywords "品牌词,品类词" --competitors "A,B,C"
 node products/xhs-research-studio/cli.mjs plan PROJECT_ID
 node products/xhs-research-studio/cli.mjs ingest PROJECT_ID harvest.json
+node products/xhs-research-studio/cli.mjs run PROJECT_ID --max-notes 80 --max-comments 2000 --max-seconds 300
+node products/xhs-research-studio/cli.mjs runs PROJECT_ID
+node products/xhs-research-studio/cli.mjs run-get PROJECT_ID RUN_ID
+node products/xhs-research-studio/cli.mjs run-resume PROJECT_ID RUN_ID
+node products/xhs-research-studio/cli.mjs run-cancel PROJECT_ID RUN_ID
+node products/xhs-research-studio/cli.mjs schedule-create PROJECT_ID --interval-minutes 1440 --max-notes 80
+node products/xhs-research-studio/cli.mjs schedules PROJECT_ID
+node products/xhs-research-studio/cli.mjs schedule-update PROJECT_ID SCHEDULE_ID --enabled false
+node products/xhs-research-studio/cli.mjs schedule-run PROJECT_ID SCHEDULE_ID
 node products/xhs-research-studio/cli.mjs diff PROJECT_ID
 node products/xhs-research-studio/cli.mjs ranks PROJECT_ID
 node products/xhs-research-studio/cli.mjs evidence PROJECT_ID --term 辣眼
@@ -210,6 +271,11 @@ node --check products/xhs-research-studio/cli.mjs
 node --check products/xhs-research-studio/evaluate-signals.mjs
 node --check products/xhs-research-studio/export-signed-pack.mjs
 node --check products/xhs-research-studio/browser-smoke.mjs
+node --check products/xhs-research-studio/lib/runs.mjs
+node --check products/xhs-research-studio/lib/executor.mjs
+node --check products/xhs-research-studio/lib/schedules.mjs
+node --check products/xhs-research-studio/lib/run-service.mjs
+node --check products/xhs-research-studio/lib/run-http.mjs
 node --test products/xhs-research-studio/test/*.test.mjs
 node products/xhs-research-studio/smoke-test.mjs
 node products/xhs-research-studio/browser-smoke.mjs
@@ -217,12 +283,12 @@ node products/xhs-research-studio/browser-smoke.mjs
 
 The browser smoke uses a real headless Chrome/Chromium DevTools session: it opens the product, waits for templates, clicks the built-in demo, verifies notes/evidence groups render, opens the client report, and fails on browser runtime errors.
 
-The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
+The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, verifies the run-system endpoint in no-executor mode, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
 
-The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior including historical-key rotation, Evidence Pack verification, negotiated HTTP v1.1/v1.2 delivery and fail-closed authenticated mode, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
+The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior including historical-key rotation, Evidence Pack verification, negotiated HTTP v1.1/v1.2 delivery and fail-closed authenticated mode, run-state transitions, executor shell-injection resistance, executor timeout/output/cancellation limits, hard-stop/manual handoff behavior, scheduled-monitor claim/recovery/overlap semantics, run API end-to-end execution, API end-to-end flow, CLI run/schedule and delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
 
 Automated test success is engineering evidence, not scientific validation of consumer-insight claims. Real semantic validation still requires the independently reviewed holdout described above.
 
 ## Product boundary
 
-This product does not bypass Xiaohongshu login, CAPTCHA, rate limits, access controls or platform safety mechanisms. It accepts evidence produced by public or user-authorized read-only Harvest workflows and makes that evidence useful for research, monitoring and delivery.
+This product does not bypass Xiaohongshu login, CAPTCHA, rate limits, access controls or platform safety mechanisms. It accepts evidence produced by public or user-authorized read-only Harvest workflows and makes that evidence useful for research, monitoring and delivery. Automatic runs use only an operator-configured external executor under a bounded JSON protocol; if that executor is absent or reports a platform hard stop, Research Studio requires manual action instead of bypassing the restriction.
