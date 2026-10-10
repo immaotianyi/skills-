@@ -58,7 +58,7 @@ jobs:
         run: node products/xhs-research-studio/browser-smoke.mjs
       - name: Build hardened container
         run: docker build -t xhs-research-studio:test products/xhs-research-studio
-      - name: Container non-root, persistence, and restart gate
+      - name: Container non-root, persistence, restart, and executor gate
         shell: bash
         run: |
           set -euo pipefail
@@ -72,10 +72,20 @@ jobs:
           trap cleanup EXIT
           docker volume create "$volume" >/dev/null
           start_container() {
+            mode="${1:-manual}"
+            extra=()
+            if [ "$mode" = "executor" ]; then
+              extra+=(
+                -e XHS_STUDIO_HARVEST_EXECUTOR=node
+                -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["test/fixtures/mock-harvest-executor.mjs"]'
+                -e XHS_EXECUTOR_FIXTURE_PATH=/app/public/demo-harvest.json
+                -e XHS_EXECUTOR_MODE=success
+              )
+            fi
             docker run -d --rm --name "$name" \
               --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
               -v "$volume":/data -p 127.0.0.1:55419:5418 \
-              xhs-research-studio:test >/dev/null
+              "${extra[@]}" xhs-research-studio:test >/dev/null
           }
           wait_health() {
             for i in {1..40}; do
@@ -89,7 +99,8 @@ jobs:
             docker logs "$name" || true
             return 1
           }
-          start_container
+
+          start_container manual
           wait_health
           uid="$(docker exec "$name" id -u)"
           test "$uid" != "0"
@@ -101,9 +112,43 @@ jobs:
             -d '{"name":"Container Persisted Project","keywords":["防晒"]}' \
             http://127.0.0.1:55419/api/projects > /tmp/xhs-project.json
           grep -q 'Container Persisted Project' /tmp/xhs-project.json
+
           docker stop "$name" >/dev/null
-          start_container
+          start_container manual
           wait_health
           curl --fail --silent http://127.0.0.1:55419/api/projects > /tmp/xhs-projects.json
           grep -q 'Container Persisted Project' /tmp/xhs-projects.json
           echo 'container persistence restart check passed'
+
+          docker stop "$name" >/dev/null
+          start_container executor
+          wait_health
+          curl --fail --silent http://127.0.0.1:55419/api/run-system > /tmp/xhs-run-system-executor.json
+          grep -q '"executorConfigured": true' /tmp/xhs-run-system-executor.json
+          curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"name":"Container Executor Project","keywords":["防晒"]}' \
+            http://127.0.0.1:55419/api/projects > /tmp/xhs-executor-project.json
+          project_id="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync('/tmp/xhs-executor-project.json','utf8')).id)")"
+          curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"budget":{"maxNotes":20,"maxComments":100,"maxSeconds":30}}' \
+            "http://127.0.0.1:55419/api/projects/${project_id}/runs" > /tmp/xhs-executor-launch.json
+          completed=0
+          for i in {1..80}; do
+            curl --fail --silent "http://127.0.0.1:55419/api/projects/${project_id}/runs" > /tmp/xhs-executor-runs.json
+            if grep -q '"state": "completed"' /tmp/xhs-executor-runs.json; then
+              completed=1
+              break
+            fi
+            if grep -q '"state": "failed"' /tmp/xhs-executor-runs.json; then
+              cat /tmp/xhs-executor-runs.json
+              echo 'configured container executor run failed' >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          test "$completed" = "1"
+          curl --fail --silent "http://127.0.0.1:55419/api/projects/${project_id}/snapshots" > /tmp/xhs-executor-snapshots.json
+          node -e "const fs=require('fs');const v=JSON.parse(fs.readFileSync('/tmp/xhs-executor-snapshots.json','utf8'));if(!Array.isArray(v.snapshots)||v.snapshots.length<1)process.exit(1)"
+          echo 'container configured executor -> snapshot check passed'
