@@ -129,6 +129,10 @@ export class RunService{
       const latestAfterExecutor=await getRun(this.dataDir,project.id,current.id);
       if(latestAfterExecutor?.state===RUN_STATES.CANCELLED)return latestAfterExecutor;
       if(result.status==='manual_action_required'){
+        // A scheduled run must never automatically retry after a platform/access
+        // safety stop. Pause the persisted schedule before recording the manual
+        // handoff so a later cadence requires an explicit operator re-enable.
+        if(current.scheduleId)await updateSchedule(this.dataDir,current.scheduleId,{enabled:false});
         current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.MANUAL_ACTION_REQUIRED,{
           riskState:result.riskState||'BLOCKED',gaps:result.gaps||[],stoppedBecause:result.reason||'Manual action required.',
         });
