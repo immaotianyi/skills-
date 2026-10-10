@@ -97,6 +97,21 @@ test('executor fails closed on timeout and output-size abuse',async()=>{
   }finally{await fs.rm(dataDir,{recursive:true,force:true})}
 });
 
+test('executor cancellation kills active child and reports EXECUTOR_CANCELLED',async()=>{
+  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-exec-cancel-'));
+  try{
+    const run=await createRun(dataDir,project);
+    const controller=new AbortController();
+    const promise=withEnv({
+      XHS_STUDIO_HARVEST_EXECUTOR:process.execPath,
+      XHS_STUDIO_HARVEST_EXECUTOR_ARGS:JSON.stringify([mock]),
+      XHS_EXECUTOR_MODE:'hang',
+    },()=>runConfiguredExecutor(project,run,{timeoutMs:5_000,signal:controller.signal}));
+    setTimeout(()=>controller.abort(),75);
+    await assert.rejects(promise,err=>err instanceof ExecutorError&&err.code==='EXECUTOR_CANCELLED');
+  }finally{await fs.rm(dataDir,{recursive:true,force:true})}
+});
+
 test('missing executor becomes manual action instead of pretending success',async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-no-exec-'));
   try{
