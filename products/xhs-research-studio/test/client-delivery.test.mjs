@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClientDeliveryCsv, buildEvidenceDelivery, buildClientDeliveryHtml, clientDeliveryFilename } from '../lib/client-delivery.mjs';
+import { buildClientDeliveryCsv, buildEvidenceDelivery, buildClientDeliveryHtml, clientDeliveryFilename } from '../public/client-delivery-model.js';
 
 const project={id:'prj_1',slug:'demo-brand',name:'Demo <Brand>',client:'Client Co',category:'Skincare'};
 const snapshot={
@@ -41,12 +41,14 @@ test('evidence delivery wraps but does not mutate the canonical Evidence Pack or
   assert.match(delivery.delivery.interpretationLimits.join(' '),/not population prevalence/u);
 });
 
-test('print delivery HTML applies bounded branding, escapes persisted text, and contains no external resource or script surface',()=>{
+test('print delivery HTML applies bounded branding, escapes persisted text, embeds a restrictive CSP, and contains no external resource or script surface',()=>{
   const html=buildClientDeliveryHtml({project,snapshot,branding,markdown:'# Finding\n<script>alert(1)</script>\nsource: note_1'});
   assert.match(html,/--accent:#0055aa/u);
   assert.match(html,/North &lt;Star&gt;/u);
   assert.match(html,/Demo &lt;Brand&gt;/u);
   assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/u);
+  assert.match(html,/Content-Security-Policy/u);
+  assert.match(html,/default-src 'none'/u);
   assert.match(html,/not population prevalence/u);
   assert.match(html,/canonical evidence trail/u);
   assert.doesNotMatch(html,/<script/u);
