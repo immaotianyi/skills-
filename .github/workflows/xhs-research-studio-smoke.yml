@@ -35,12 +35,15 @@ jobs:
           node --check products/xhs-research-studio/public/runs-ui.js
           node --check products/xhs-research-studio/public/pack-v12.js
           node --check products/xhs-research-studio/public/hosted-ui.js
+          node --check products/xhs-research-studio/public/client-delivery-model.js
+          node --check products/xhs-research-studio/public/client-delivery-ui.js
           node --check products/xhs-research-studio/cli.mjs
           node --check products/xhs-research-studio/evaluate-signals.mjs
           node --check products/xhs-research-studio/export-signed-pack.mjs
           node --check products/xhs-research-studio/browser-smoke.mjs
           node --check products/xhs-research-studio/hosted-smoke.mjs
           node --check products/xhs-research-studio/hosted-browser-smoke.mjs
+          node --check products/xhs-research-studio/client-delivery-browser-smoke.mjs
           node --check products/xhs-research-studio/hosted-container-smoke.mjs
           node --check products/xhs-research-studio/lib/normalize.mjs
           node --check products/xhs-research-studio/lib/analysis.mjs
@@ -72,6 +75,8 @@ jobs:
         run: node products/xhs-research-studio/browser-smoke.mjs
       - name: Hosted Headless Chrome self-service smoke
         run: node products/xhs-research-studio/hosted-browser-smoke.mjs
+      - name: Hosted branded client delivery Chrome smoke
+        run: node products/xhs-research-studio/client-delivery-browser-smoke.mjs
       - name: Build hardened container
         run: docker build -t xhs-research-studio:test products/xhs-research-studio
       - name: Container non-root, persistence, restart, and executor gate
