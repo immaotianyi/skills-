@@ -99,6 +99,23 @@ test('RunService cancellation aborts executor and never ingests a snapshot',asyn
   }finally{await fs.rm(dataDir,{recursive:true,force:true})}
 });
 
+test('RunService rejects cancellation after snapshot commit point begins',async()=>{
+  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-commit-'));
+  try{
+    const project=await seedProject(dataDir,'prj_commit');
+    const service=new RunService(dataDir);
+    const {createRun,transitionRun}=await import('../lib/runs.mjs');
+    const run=await createRun(dataDir,project);
+    await transitionRun(dataDir,project.id,run.id,'running');
+    service.abortByProject.set(project.id,{runId:run.id,controller:new AbortController(),committing:true});
+    await assert.rejects(
+      ()=>service.cancel(project,run.id),
+      error=>error?.code==='RUN_COMMITTING'&&error?.statusCode===409,
+    );
+    assert.equal((await service.run(project.id,run.id)).state,'running');
+  }finally{await fs.rm(dataDir,{recursive:true,force:true})}
+});
+
 test('RunService schedule tick claims due schedule and produces a scheduled snapshot',async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-schedule-'));
   try{
