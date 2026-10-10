@@ -18,21 +18,43 @@ function harvest(){
   };
 }
 
-test('canonical integrity is stable across object key order and detects mutation',()=>{
+test('canonical checksum is stable across object key order and detects mutation without claiming authentication',()=>{
   const a={b:2,a:{y:2,x:1}};
   const b={a:{x:1,y:2},b:2};
   const integrity=makeIntegrity(a,'test-scope');
-  assert.equal(verifyIntegrity(b,integrity,'test-scope').ok,true);
+  const verified=verifyIntegrity(b,integrity,'test-scope');
+  assert.equal(integrity.algorithm,'sha256');
+  assert.equal(integrity.authenticated,false);
+  assert.equal(verified.ok,true);
+  assert.equal(verified.authenticated,false);
+  assert.equal(verified.checksumOnly,true);
   assert.equal(verifyIntegrity({...b,b:3},integrity,'test-scope').ok,false);
 });
 
-test('new snapshots are signed and tampering fails closed while legacy unsigned snapshots stay explicit',async()=>{
+test('HMAC integrity authenticates with the external key and fails with missing or wrong keys',()=>{
+  const value={evidence:'原始证据',count:3};
+  const key='unit-test-hmac-key-at-least-32-bytes-2026';
+  const integrity=makeIntegrity(value,'hmac-test',{key,keyId:'unit-v1'});
+  assert.equal(integrity.algorithm,'hmac-sha256');
+  assert.equal(integrity.authenticated,true);
+  const verified=verifyIntegrity(value,integrity,'hmac-test',{key,keyId:'unit-v1'});
+  assert.equal(verified.ok,true);
+  assert.equal(verified.authenticated,true);
+  assert.equal(verified.checksumOnly,false);
+  assert.equal(verifyIntegrity(value,integrity,'hmac-test').ok,false);
+  assert.equal(verifyIntegrity(value,integrity,'hmac-test',{key:'wrong-key-value-long-enough-for-this-unit-case',keyId:'unit-v1'}).ok,false);
+});
+
+test('checksum snapshots detect content mutation while legacy unsigned snapshots stay explicit',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-'));
   try{
     await ensureData(dir);
     const snapshot=await saveSnapshot(dir,'prj_test',harvest());
     assert.equal(snapshot.integrity.algorithm,'sha256');
+    assert.equal(snapshot.integrity.authenticated,false);
     assert.equal(snapshot.integrityStatus.verified,true);
+    assert.equal(snapshot.integrityStatus.authenticated,false);
+    assert.equal(snapshot.integrityStatus.checksumOnly,true);
     assert.equal(snapshot.integrityStatus.unsigned,false);
     assert.ok(Array.isArray(snapshot.validation.inputWarnings));
 
@@ -49,19 +71,24 @@ test('new snapshots are signed and tampering fails closed while legacy unsigned 
     const legacy=await loadSnapshot(dir,'prj_test',snapshot.id);
     assert.equal(legacy.integrityStatus.verified,false);
     assert.equal(legacy.integrityStatus.unsigned,true);
+    assert.equal(legacy.integrityStatus.authenticated,false);
   } finally {
     await fs.rm(dir,{recursive:true,force:true});
   }
 });
 
-test('Evidence Pack v1.2 is tamper-evident and carries snapshot integrity',async()=>{
+test('Evidence Pack v1.2 checksum detects mutation but remains explicitly unauthenticated without a key',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-pack-'));
   try{
     const snapshot=await saveSnapshot(dir,'prj_pack',harvest());
     const pack=buildEvidencePack({id:'prj_pack',name:'Pack Test'},snapshot);
     assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.2');
     assert.ok(pack.snapshot.integrity?.digest);
-    assert.equal(verifyEvidencePack(pack).ok,true);
+    assert.equal(pack.integrity.authenticated,false);
+    const verification=verifyEvidencePack(pack);
+    assert.equal(verification.ok,true);
+    assert.equal(verification.authenticated,false);
+    assert.equal(verification.checksumOnly,true);
     const tampered=structuredClone(pack);
     tampered.sources[0].title='篡改标题';
     assert.equal(verifyEvidencePack(tampered).ok,false);
