@@ -25,7 +25,7 @@ async function waitForHealth(base) {
   throw new Error('server did not become healthy');
 }
 
-test('CLI covers validate → create → ingest → report/pack/csv and request limit returns 413', {timeout:15000}, async () => {
+test('CLI/API covers delivery flow, concurrent writes, and request limits', {timeout:20000}, async () => {
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-cli-e2e-'));
   const outDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-cli-out-'));
   const port=56000+Math.floor(Math.random()*500);
@@ -63,6 +63,22 @@ test('CLI covers validate → create → ingest → report/pack/csv and request 
     const pack=JSON.parse(await fs.readFile(packPath,'utf8'));
     assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.1');
     assert.match(await fs.readFile(csvPath,'utf8'),/noteId,title,author/);
+
+    const concurrentCount=24;
+    const created=await Promise.all(Array.from({length:concurrentCount},async(_,index)=>{
+      const response=await fetch(`${base}/api/projects`,{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({name:`Concurrent ${index}`}),
+      });
+      assert.equal(response.status,201);
+      return response.json();
+    }));
+    assert.equal(new Set(created.map(x=>x.id)).size,concurrentCount);
+    const projects=await fetch(`${base}/api/projects`).then(r=>r.json());
+    for(let index=0;index<concurrentCount;index++) {
+      assert.ok(projects.projects.some(x=>x.name===`Concurrent ${index}`),`missing concurrent project ${index}`);
+    }
 
     const oversized=await fetch(`${base}/api/analyze`,{
       method:'POST',
