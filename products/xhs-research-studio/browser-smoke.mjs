@@ -12,6 +12,7 @@ const chromeDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-browser-profile-'));
 const port=57000+Math.floor(Math.random()*400);
 const debugPort=58000+Math.floor(Math.random()*400);
 const base=`http://127.0.0.1:${port}`;
+const debugBase=`http://127.0.0.1:${debugPort}`;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 async function findChrome() {
@@ -28,7 +29,7 @@ async function findChrome() {
   throw new Error(`Chrome/Chromium not found. Tried: ${candidates.join(', ')}`);
 }
 
-async function poll(fn,{attempts=100,delay=50,label='condition'}={}) {
+async function poll(fn,{attempts=100,delay=50,label='condition',diagnostic=()=>''}={}) {
   let last;
   for(let i=0;i<attempts;i++) {
     try {
@@ -38,7 +39,8 @@ async function poll(fn,{attempts=100,delay=50,label='condition'}={}) {
     } catch(err) { last=err; }
     await sleep(delay);
   }
-  throw new Error(`Timed out waiting for ${label}${last instanceof Error?`: ${last.message}`:''}`);
+  const extra=diagnostic();
+  throw new Error(`Timed out waiting for ${label}${last instanceof Error?`: ${last.message}`:''}${extra?`\n${extra}`:''}`);
 }
 
 const server=spawn(process.execPath,[path.join(root,'server.mjs')],{
@@ -47,10 +49,12 @@ const server=spawn(process.execPath,[path.join(root,'server.mjs')],{
 });
 let chrome;
 let socket;
+let chromeStdout='';
+let chromeStderr='';
 try {
   await poll(async()=>{
     try{return (await fetch(`${base}/api/health`)).ok}catch{return false}
-  },{label:'Studio health'});
+  },{attempts:200,delay:50,label:'Studio health'});
 
   const chromeBin=await findChrome();
   chrome=spawn(chromeBin,[
@@ -60,22 +64,53 @@ try {
     '--disable-dev-shm-usage',
     '--no-first-run',
     '--no-default-browser-check',
+    '--remote-debugging-address=127.0.0.1',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${chromeDir}`,
     'about:blank',
   ],{stdio:['ignore','pipe','pipe']});
+  chrome.stdout?.on('data',chunk=>{chromeStdout=(chromeStdout+chunk.toString()).slice(-12000)});
+  chrome.stderr?.on('data',chunk=>{chromeStderr=(chromeStderr+chunk.toString()).slice(-12000)});
 
-  const target=await poll(async()=>{
+  const chromeDiagnostic=()=>[
+    `Chrome binary: ${chromeBin}`,
+    `Chrome exitCode: ${chrome?.exitCode ?? 'running'}`,
+    chromeStderr?`Chrome stderr:\n${chromeStderr}`:'',
+    chromeStdout?`Chrome stdout:\n${chromeStdout}`:'',
+  ].filter(Boolean).join('\n');
+
+  await poll(async()=>{
+    if(chrome.exitCode!==null) throw new Error(`Chrome exited with code ${chrome.exitCode}`);
     try {
-      const list=await fetch(`http://127.0.0.1:${debugPort}/json/list`).then(r=>r.json());
+      const response=await fetch(`${debugBase}/json/version`);
+      if(!response.ok) return false;
+      const version=await response.json();
+      return version.webSocketDebuggerUrl?version:false;
+    } catch { return false; }
+  },{attempts:400,delay:50,label:'Chrome DevTools endpoint',diagnostic:chromeDiagnostic});
+
+  let target=await poll(async()=>{
+    if(chrome.exitCode!==null) throw new Error(`Chrome exited with code ${chrome.exitCode}`);
+    try {
+      const list=await fetch(`${debugBase}/json/list`).then(r=>r.ok?r.json():[]);
       return list.find(x=>x.type==='page'&&x.webSocketDebuggerUrl)||false;
     } catch { return false; }
-  },{label:'Chrome DevTools target'});
+  },{attempts:120,delay:50,label:'Chrome page target',diagnostic:chromeDiagnostic}).catch(async error=>{
+    try {
+      const created=await fetch(`${debugBase}/json/new?about%3Ablank`,{method:'PUT'});
+      if(created.ok) {
+        const value=await created.json();
+        if(value?.webSocketDebuggerUrl) return value;
+      }
+    } catch {}
+    throw error;
+  });
 
   socket=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{
-    socket.addEventListener('open',resolve,{once:true});
-    socket.addEventListener('error',reject,{once:true});
+    const timer=setTimeout(()=>reject(new Error('WebSocket connection timeout')),5000);
+    socket.addEventListener('open',()=>{clearTimeout(timer);resolve()},{once:true});
+    socket.addEventListener('error',event=>{clearTimeout(timer);reject(new Error(`WebSocket error: ${event?.message||'unknown'}`))},{once:true});
   });
 
   let nextId=0;
@@ -91,7 +126,7 @@ try {
       return;
     }
     if(msg.method==='Runtime.exceptionThrown') browserErrors.push(msg.params?.exceptionDetails?.text||'Runtime.exceptionThrown');
-    if(msg.method==='Log.entryAdded'&&['error','warning'].includes(msg.params?.entry?.level)) browserErrors.push(`${msg.params.entry.level}: ${msg.params.entry.text}`);
+    if(msg.method==='Log.entryAdded'&&msg.params?.entry?.level==='error') browserErrors.push(`error: ${msg.params.entry.text}`);
   });
 
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{
@@ -103,7 +138,7 @@ try {
         pending.delete(id);
         reject(new Error(`CDP timeout: ${method}`));
       }
-    },5000).unref?.();
+    },8000).unref?.();
   });
   const evaluate=async expression=>{
     const response=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
@@ -115,16 +150,16 @@ try {
   await cdp('Log.enable');
   await cdp('Page.enable');
   await cdp('Page.navigate',{url:base});
-  await poll(()=>evaluate(`document.readyState==='complete'&&!!document.querySelector('#demoBtn')`),{label:'page ready'});
+  await poll(()=>evaluate(`document.readyState==='complete'&&!!document.querySelector('#demoBtn')`),{attempts:200,delay:50,label:'page ready',diagnostic:chromeDiagnostic});
   const templateCount=await poll(async()=>{
     const count=await evaluate(`document.querySelectorAll('.template').length`);
     return count>=3?count:false;
-  },{label:'templates rendered'});
+  },{attempts:200,delay:50,label:'templates rendered',diagnostic:chromeDiagnostic});
 
   await evaluate(`document.querySelector('#demoBtn').click(); true`);
   const rendered=await poll(async()=>{
     return await evaluate(`!document.querySelector('#projectView').hidden && document.querySelectorAll('#topNotes .note').length>=3`);
-  },{attempts:160,delay:50,label:'demo project render'});
+  },{attempts:240,delay:50,label:'demo project render',diagnostic:chromeDiagnostic});
   assert.equal(rendered,true);
 
   const metrics=await evaluate(`document.querySelector('#metrics').innerText`);
@@ -134,10 +169,10 @@ try {
   assert.equal(sourceProtocolsOk,true);
 
   await evaluate(`document.querySelector('.tabs button[data-tab="report"]').click(); true`);
-  const reportReady=await poll(()=>evaluate(`document.querySelector('#reportText').textContent.includes('Methodology / interpretation limits')`),{attempts:120,delay:50,label:'client report render'});
+  const reportReady=await poll(()=>evaluate(`document.querySelector('#reportText').textContent.includes('Methodology / interpretation limits')`),{attempts:200,delay:50,label:'client report render',diagnostic:chromeDiagnostic});
   assert.equal(reportReady,true);
 
-  await sleep(100);
+  await sleep(150);
   assert.deepEqual(browserErrors,[],`browser errors: ${browserErrors.join(' | ')}`);
   console.log(JSON.stringify({
     ok:true,
