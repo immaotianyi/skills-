@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,12 @@ async function readStdin(){
   for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>MAX_PLAN_BYTES)fail(`Executor plan exceeds ${MAX_PLAN_BYTES} bytes.`,'AGENT_PLAN_LIMIT');chunks.push(chunk)}
   const raw=Buffer.concat(chunks).toString('utf8').trim();if(!raw)fail('Executor plan is empty.','AGENT_PLAN');
   try{return JSON.parse(raw)}catch(error){fail(`Executor plan is not valid JSON: ${error.message}`,'AGENT_PLAN')}
+}
+async function readBoundedResponse(response){
+  if(!response.body)return Buffer.alloc(0);
+  const chunks=[];let bytes=0;
+  for await(const chunk of response.body){const buffer=Buffer.from(chunk);bytes+=buffer.length;if(bytes>MAX_RESPONSE_BYTES){try{await response.body.cancel?.()}catch{}fail(`Agent gateway response exceeds ${MAX_RESPONSE_BYTES} bytes.`,'AGENT_RESPONSE_LIMIT')}chunks.push(buffer)}
+  return Buffer.concat(chunks,bytes);
 }
 function validatePlan(plan){
   if(!plan||typeof plan!=='object'||Array.isArray(plan))fail('Executor plan must be one JSON object.','AGENT_PLAN');
@@ -81,7 +87,7 @@ async function main(){
   try{
     const response=await fetch(url,{method:'POST',headers:authHeaders(body),body,redirect:'error',signal:controller.signal});
     if(!response.ok)fail(`Agent gateway returned HTTP ${response.status}.`,'AGENT_HTTP');
-    const buffer=Buffer.from(await response.arrayBuffer());if(buffer.length>MAX_RESPONSE_BYTES)fail(`Agent gateway response exceeds ${MAX_RESPONSE_BYTES} bytes.`,'AGENT_RESPONSE_LIMIT');
+    const buffer=await readBoundedResponse(response);
     let parsed;try{parsed=JSON.parse(buffer.toString('utf8'))}catch(error){fail(`Agent gateway response is not valid JSON: ${error.message}`,'AGENT_PROTOCOL')}
     process.stdout.write(JSON.stringify(validateGatewayResult(parsed))+'\n');
   }catch(error){if(error?.name==='AbortError')fail('Agent gateway request timed out.','AGENT_TIMEOUT');throw error}finally{clearTimeout(timeout)}
