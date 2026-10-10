@@ -89,6 +89,7 @@ jobs:
           start_container() {
             mode="${1:-manual}"
             extra=()
+            docker rm -f "$name" >/dev/null 2>&1 || true
             if [ "$mode" = "executor" ]; then
               extra+=(
                 -e XHS_STUDIO_HARVEST_EXECUTOR=node
