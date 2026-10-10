@@ -99,6 +99,33 @@ test('RunService cancellation aborts executor and never ingests a snapshot',asyn
   }finally{await fs.rm(dataDir,{recursive:true,force:true})}
 });
 
+test('RunService rejects concurrent launch races before a second queued run is created',async()=>{
+  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-race-'));
+  try{
+    const project=await seedProject(dataDir,'prj_race');
+    await withEnv({
+      XHS_STUDIO_HARVEST_EXECUTOR:process.execPath,
+      XHS_STUDIO_HARVEST_EXECUTOR_ARGS:JSON.stringify([mock]),
+      XHS_EXECUTOR_MODE:'hang',
+    },async()=>{
+      const service=new RunService(dataDir);
+      const results=await Promise.allSettled([
+        service.launch(project,{budget:{maxSeconds:60}}),
+        service.launch(project,{budget:{maxSeconds:60}}),
+      ]);
+      const fulfilled=results.filter(result=>result.status==='fulfilled');
+      const rejected=results.filter(result=>result.status==='rejected');
+      assert.equal(fulfilled.length,1);
+      assert.equal(rejected.length,1);
+      assert.equal(rejected[0].reason?.code,'RUN_BUSY');
+      const runs=await service.runs(project.id);
+      assert.equal(runs.length,1,'concurrent launch must not create an orphan queued run');
+      await service.cancel(project,fulfilled[0].value.id);
+      assert.equal((await waitRun(service,project.id,fulfilled[0].value.id,['cancelled'])).state,'cancelled');
+    });
+  }finally{await fs.rm(dataDir,{recursive:true,force:true})}
+});
+
 test('RunService rejects cancellation after snapshot commit point begins',async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-commit-'));
   try{
