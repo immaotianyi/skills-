@@ -3,6 +3,9 @@ services:
     build: .
     ports:
       - "127.0.0.1:5418:5418"
+    environment:
+      XHS_STUDIO_INTEGRITY_KEY: "${XHS_STUDIO_INTEGRITY_KEY:-}"
+      XHS_STUDIO_INTEGRITY_KEY_ID: "${XHS_STUDIO_INTEGRITY_KEY_ID:-local-v1}"
     volumes:
       - xhs_studio_data:/data
     read_only: true
