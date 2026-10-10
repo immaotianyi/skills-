@@ -36,15 +36,6 @@
   };
 
   const esc=value=>String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  function injectStyles(){
-    const style=document.createElement('style');
-    style.textContent=`
-      #hostedBar{position:sticky;top:0;z-index:50;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 18px;background:#171717;color:#fff;border-bottom:1px solid #333}#hostedBar select,#hostedBar button{width:auto;margin:0}#hostedBar .hostedGrow{flex:1}#hostedBar small{opacity:.8}
-      #hostedAuthGate{position:fixed;inset:0;z-index:1000;background:rgba(10,10,10,.88);display:grid;place-items:center;padding:24px}#hostedAuthGate[hidden]{display:none}#hostedAuthCard{width:min(520px,100%);background:#fff;color:#171717;border-radius:18px;padding:26px}#hostedAuthCard form{display:grid;gap:10px;margin-top:14px}#hostedAuthCard .authTabs{display:flex;gap:8px}#hostedAuthCard .authTabs button{width:auto}#hostedAuthError{color:#a21b1b;min-height:1.4em}
-      #hostedPanel{position:fixed;right:18px;top:72px;z-index:80;width:min(480px,calc(100vw - 36px));max-height:calc(100vh - 92px);overflow:auto;background:#fff;border:1px solid #ccc;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.22);padding:18px}#hostedPanel[hidden]{display:none}#hostedPanel .hostedRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#hostedPanel button,#hostedPanel select{width:auto}#hostedPanel pre{white-space:pre-wrap;max-height:300px;overflow:auto;background:#f5f5f3;padding:12px;border-radius:10px}#hostedToast{position:fixed;bottom:18px;right:18px;z-index:1200;background:#171717;color:#fff;padding:10px 14px;border-radius:10px;max-width:480px}#hostedToast[hidden]{display:none}
-    `;
-    document.head.appendChild(style);
-  }
   function toast(message){const node=document.getElementById('hostedToast');if(!node)return;node.textContent=message;node.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>{node.hidden=true},3500)}
 
   async function raw(path,options={}){
@@ -96,14 +87,13 @@
     const ws=activeWorkspace(),ent=ws?.entitlement||{};document.getElementById('hostedPlan').textContent=`${ent.plan||'unpaid'} · ${ent.status||'inactive'} · runs ${ws?.usage?.runs||0}/${ent.maxRunsMonth||0}`;
   }
 
-  async function refreshMe(){me=(await raw('/api/me')).body;selectWorkspace();renderHostedBar();return me}
   async function billingCheckout(){const plan=document.getElementById('hostedPlanSelect')?.value;if(!plan)return;const result=(await post(`/api/workspaces/${workspaceId}/billing/checkout`,{plan})).body;if(result.url)location.href=result.url}
   async function billingPortal(){const result=(await post(`/api/workspaces/${workspaceId}/billing/portal`,{})).body;if(result.url)location.href=result.url}
   async function invite(){const email=document.getElementById('hostedInviteEmail')?.value,role=document.getElementById('hostedInviteRole')?.value;const result=(await post(`/api/workspaces/${workspaceId}/invitations`,{email,role})).body;await navigator.clipboard.writeText(result.invitation.url);toast('邀请链接已复制');await renderPanel()}
 
   async function renderPanel(){
-    const panel=document.getElementById('hostedPanel');if(!panel)return;const ws=activeWorkspace(),ent=ws?.entitlement||{},plans=status?.billing?.plans||[];
-    panel.innerHTML=`<div class="row"><h3>Workspace</h3><button id="hostedClose" class="link">关闭</button></div><p><b>${esc(ws?.name||'')}</b> · ${esc(ws?.role||'')}</p><p>套餐：${esc(ent.plan||'unpaid')} / ${esc(ent.status||'inactive')}<br>项目上限 ${Number(ent.maxProjects||0)} · 月运行 ${Number(ws?.usage?.runs||0)}/${Number(ent.maxRunsMonth||0)}</p><div class="hostedRow"><select id="hostedPlanSelect">${plans.filter(p=>p.configured).map(p=>`<option value="${esc(p.id)}">${esc(p.label)} · ${p.maxProjects} projects / ${p.maxRunsMonth} runs</option>`).join('')}</select><button id="hostedCheckout">订阅 / 更换套餐</button>${ent.providerCustomerId?'<button id="hostedPortal" class="secondary">发票 / 取消订阅</button>':''}</div>${roleCanManage()?`<hr><h4>邀请成员</h4><div class="hostedRow"><input id="hostedInviteEmail" type="email" placeholder="成员邮箱"><select id="hostedInviteRole"><option value="analyst">analyst</option><option value="viewer">viewer</option><option value="admin">admin</option></select><button id="hostedInvite">创建邀请</button></div><div id="hostedMembers">加载成员…</div>`:''}`;
+    const panel=document.getElementById('hostedPanel');if(!panel)return;const ws=activeWorkspace(),ent=ws?.entitlement||{},plans=status?.billing?.plans||[],configuredPlans=plans.filter(p=>p.configured);
+    panel.innerHTML=`<div class="row"><h3>Workspace</h3><button id="hostedClose" class="link">关闭</button></div><p><b>${esc(ws?.name||'')}</b> · ${esc(ws?.role||'')}</p><p>套餐：${esc(ent.plan||'unpaid')} / ${esc(ent.status||'inactive')}<br>项目上限 ${Number(ent.maxProjects||0)} · 月运行 ${Number(ws?.usage?.runs||0)}/${Number(ent.maxRunsMonth||0)}</p><div class="hostedRow"><select id="hostedPlanSelect">${configuredPlans.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} · ${p.maxProjects} projects / ${p.maxRunsMonth} runs</option>`).join('')}</select><button id="hostedCheckout" ${configuredPlans.length?'':'disabled'}>订阅 / 更换套餐</button>${ent.providerCustomerId?'<button id="hostedPortal" class="secondary">发票 / 取消订阅</button>':''}</div>${!configuredPlans.length?'<p><small>当前部署尚未配置可购买的 Stripe Price。</small></p>':''}${roleCanManage()?`<hr><h4>邀请成员</h4><div class="hostedRow"><input id="hostedInviteEmail" type="email" placeholder="成员邮箱"><select id="hostedInviteRole"><option value="analyst">analyst</option><option value="viewer">viewer</option><option value="admin">admin</option></select><button id="hostedInvite">创建邀请</button></div><div id="hostedMembers">加载成员…</div>`:''}`;
     panel.hidden=false;document.getElementById('hostedClose').onclick=()=>{panel.hidden=true};
     const checkout=document.getElementById('hostedCheckout');if(checkout)checkout.onclick=()=>billingCheckout().catch(err=>toast(err.message));
     const portal=document.getElementById('hostedPortal');if(portal)portal.onclick=()=>billingPortal().catch(err=>toast(err.message));
@@ -131,10 +121,13 @@
   });
 
   async function init(){
-    injectStyles();
     try{
+      const healthResponse=await nativeFetch('/api/health');
+      if(!healthResponse.ok){resolveReady();return}
+      const health=await healthResponse.json();
+      if(health?.hosted!==true){resolveReady();return}
       const response=await nativeFetch('/api/hosted/status');
-      if(!response.ok){resolveReady();return}
+      if(!response.ok)throw new Error(`Hosted status failed: HTTP ${response.status}`);
       status=await response.json();if(!status?.hosted){resolveReady();return}hosted=true;ensureShell();
       const meResponse=await nativeFetch('/api/me');
       if(meResponse.ok){me=await meResponse.json();selectWorkspace();renderHostedBar();resolveReady();return}
