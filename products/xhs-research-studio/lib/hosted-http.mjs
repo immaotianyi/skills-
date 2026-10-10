@@ -1,4 +1,5 @@
 import { publicBillingPlans, createStripeCheckoutSession, createStripePortalSession, verifyStripeWebhook, applyStripeEvent } from './billing.mjs';
+import { assertLoginAllowed, recordLoginFailure, recordLoginSuccess, assertRegistrationAllowed, recordRegistrationAttempt, requestClientIp } from './auth-security.mjs';
 
 const COOKIE='xhs_studio_session';
 
@@ -56,11 +57,17 @@ export async function handleHostedApi({req,res,url,store,readJson,readRaw,send,g
   const parts=url.pathname.split('/').filter(Boolean);
   if(url.pathname==='/api/hosted/status'&&req.method==='GET')return send(res,200,{hosted:true,session:optionalSessionPayload(req,store),billing:{provider:'stripe',plans:publicBillingPlans(env),configured:Boolean(env.XHS_STUDIO_STRIPE_SECRET_KEY&&env.XHS_STUDIO_STRIPE_WEBHOOK_SECRET)}});
   if(url.pathname==='/api/auth/register'&&req.method==='POST'){
-    assertSameOrigin(req,env);const body=await readJson(req),created=store.register({email:body.email,password:body.password,workspaceName:body.workspaceName}),session=store.createSession(created.user.id);
+    assertSameOrigin(req,env);
+    const ip=requestClientIp(req,env);assertRegistrationAllowed(store,{ip});recordRegistrationAttempt(store,{ip});
+    const body=await readJson(req),created=store.register({email:body.email,password:body.password,workspaceName:body.workspaceName}),session=store.createSession(created.user.id);
     return send(res,201,{...created,...mePayload(store,{user:created.user,expiresAt:session.expiresAt})},'application/json; charset=utf-8',{'set-cookie':sessionCookie(req,session.token,session.expiresAt,env)});
   }
   if(url.pathname==='/api/auth/login'&&req.method==='POST'){
-    assertSameOrigin(req,env);const body=await readJson(req),user=store.authenticate(body.email,body.password);if(!user)throw new HostedHttpError(401,'Invalid email or password.','AUTH_INVALID');
+    assertSameOrigin(req,env);
+    const body=await readJson(req),ip=requestClientIp(req,env);assertLoginAllowed(store,{email:body.email,ip});
+    const user=store.authenticate(body.email,body.password);
+    if(!user){recordLoginFailure(store,{email:body.email,ip});assertLoginAllowed(store,{email:body.email,ip});throw new HostedHttpError(401,'Invalid email or password.','AUTH_INVALID')}
+    recordLoginSuccess(store,{email:body.email,ip});
     const session=store.createSession(user.id);store.audit({userId:user.id,action:'auth.login',metadata:{}});return send(res,200,mePayload(store,{user,expiresAt:session.expiresAt}),'application/json; charset=utf-8',{'set-cookie':sessionCookie(req,session.token,session.expiresAt,env)});
   }
   if(url.pathname==='/api/auth/logout'&&req.method==='POST'){
