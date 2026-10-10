@@ -7,7 +7,8 @@ import { makeIntegrity, verifyIntegrity, IntegrityError } from './integrity.mjs'
 import { HarvestValidationError, validateHarvestInput, validateNormalizedHarvest } from './validation.mjs';
 
 const SAFE_ID_RE = /^[A-Za-z0-9._-]+$/u;
-const SNAPSHOT_SCOPE='xhs-harvest-snapshot-evidence-v1';
+const SNAPSHOT_SCOPE_V1='xhs-harvest-snapshot-evidence-v1';
+const SNAPSHOT_SCOPE_V2='xhs-research-studio-snapshot-record-v2';
 const projectMutationQueues = new Map();
 
 export function makeId(prefix='id') {
@@ -24,32 +25,60 @@ function integrityOptions() {
   return {key,keyId:String(process.env.XHS_STUDIO_INTEGRITY_KEY_ID||'local-v1')};
 }
 
+function snapshotRecordValue(snapshot) {
+  return {
+    id:snapshot.id,
+    projectId:snapshot.projectId,
+    createdAt:snapshot.createdAt,
+    harvest:snapshot.harvest,
+    analysis:snapshot.analysis,
+    validation:snapshot.validation,
+  };
+}
+
 function verifySnapshotEvidence(snapshot) {
-  if (!snapshot?.harvest) return {verified:false,unsigned:false,authenticated:false,checksumOnly:false,errors:[{path:'harvest',message:'snapshot harvest is missing'}]};
-  if (!snapshot.integrity) return {verified:false,unsigned:true,authenticated:false,checksumOnly:false,errors:[]};
-  const result=verifyIntegrity(snapshot.harvest,snapshot.integrity,SNAPSHOT_SCOPE,integrityOptions());
+  if (!snapshot?.harvest) return {verified:false,unsigned:false,authenticated:false,checksumOnly:false,recordProtected:false,errors:[{path:'harvest',message:'snapshot harvest is missing'}]};
+  if (!snapshot.integrity) return {verified:false,unsigned:true,authenticated:false,checksumOnly:false,recordProtected:false,errors:[]};
+
+  let target;
+  let recordProtected=false;
+  if(snapshot.integrity.scope===SNAPSHOT_SCOPE_V2){
+    target=snapshotRecordValue(snapshot);
+    recordProtected=true;
+  } else if(snapshot.integrity.scope===SNAPSHOT_SCOPE_V1){
+    target=snapshot.harvest;
+  } else {
+    throw new IntegrityError('Stored snapshot uses an unsupported integrity scope.',[{path:'integrity.scope',message:`Unsupported scope ${snapshot.integrity.scope||'(missing)'}.`}]);
+  }
+
+  const result=verifyIntegrity(target,snapshot.integrity,snapshot.integrity.scope,integrityOptions());
   if(!result.ok) throw new IntegrityError('Stored snapshot evidence failed integrity verification.',result.errors);
   return {
     verified:true,
     unsigned:false,
     authenticated:result.authenticated,
     checksumOnly:result.checksumOnly,
+    recordProtected,
     errors:[],
     digest:result.actualDigest,
     keyId:snapshot.integrity.keyId||null,
+    scope:snapshot.integrity.scope,
   };
+}
+
+function currentAnalysisShape(analysis) {
+  return Boolean(analysis)
+    && Boolean(analysis.methodology)
+    && Boolean(analysis.quality)
+    && Boolean(analysis.engagement?.model)
+    && Array.isArray(analysis.evidenceClusters);
 }
 
 function hydrateSnapshot(snapshot) {
   if (!snapshot || !snapshot.harvest) return snapshot;
   const integrityStatus=verifySnapshotEvidence(snapshot);
-  const analysis = snapshot.analysis;
-  const stale = !analysis
-    || !analysis.methodology
-    || !analysis.quality
-    || !analysis.engagement?.model
-    || !Array.isArray(analysis.evidenceClusters);
-  if (!stale) return {...snapshot,integrityStatus};
+  const mustRecompute=!integrityStatus.recordProtected || !currentAnalysisShape(snapshot.analysis);
+  if (!mustRecompute) return {...snapshot,integrityStatus};
   return {
     ...snapshot,
     analysis: analyze(snapshot.harvest),
@@ -57,6 +86,7 @@ function hydrateSnapshot(snapshot) {
     migration: {
       ...(snapshot.migration || {}),
       analysisRecomputedInMemory: true,
+      reason:integrityStatus.recordProtected?'stale-analysis-shape':'derived-analysis-not-covered-by-record-integrity',
     },
   };
 }
@@ -145,8 +175,9 @@ export async function listSnapshots(dataDir, projectId) {
   }
   const out = [];
   for (const file of files) {
+    const raw=await readJson(path.join(dir,file));
     try {
-      const snapshot = hydrateSnapshot(await readJson(path.join(dir,file)));
+      const snapshot = hydrateSnapshot(raw);
       if (!snapshot) continue;
       out.push({
         id:snapshot.id,
@@ -159,7 +190,13 @@ export async function listSnapshots(dataDir, projectId) {
       });
     } catch(err) {
       if(!(err instanceof IntegrityError)) throw err;
-      out.push({id:path.basename(file,'.json'),createdAt:null,integrityStatus:{verified:false,unsigned:false,authenticated:false,checksumOnly:false,errors:err.details}});
+      out.push({
+        id:raw?.id||path.basename(file,'.json'),
+        createdAt:raw?.createdAt||raw?.harvest?.source?.capturedAt||null,
+        source:raw?.harvest?.source,
+        integrity:raw?.integrity||null,
+        integrityStatus:{verified:false,unsigned:false,authenticated:false,checksumOnly:false,recordProtected:false,errors:err.details},
+      });
     }
   }
   out.sort((a,b) => {
@@ -188,12 +225,12 @@ export async function saveSnapshot(dataDir, projectId, raw) {
     projectId,
     createdAt: harvest.source.capturedAt || new Date().toISOString(),
     harvest,
-    integrity:makeIntegrity(harvest,SNAPSHOT_SCOPE,integrityOptions()),
     validation: { inputWarnings:inputValidation.warnings, warnings: validation.warnings },
   };
   snapshot.analysis = analyze(harvest);
+  snapshot.integrity=makeIntegrity(snapshotRecordValue(snapshot),SNAPSHOT_SCOPE_V2,integrityOptions());
   await writeJsonAtomic(path.join(dataDir,'snapshots',projectId,`${snapshot.id}.json`), snapshot);
   return hydrateSnapshot(snapshot);
 }
 
-export const storageIntegrity = Object.freeze({snapshotScope:SNAPSHOT_SCOPE});
+export const storageIntegrity = Object.freeze({snapshotScopeV1:SNAPSHOT_SCOPE_V1,snapshotScopeV2:SNAPSHOT_SCOPE_V2});
