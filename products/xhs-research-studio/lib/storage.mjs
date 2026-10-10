@@ -18,12 +18,26 @@ function assertSafeId(value, label='id') {
   if (!SAFE_ID_RE.test(String(value || ''))) throw new HarvestValidationError(`Invalid ${label}.`, [{path:label,message:'Only letters, numbers, dot, underscore and dash are allowed.'}], 400);
 }
 
+function integrityOptions() {
+  const key=String(process.env.XHS_STUDIO_INTEGRITY_KEY||'');
+  if(key && Buffer.byteLength(key,'utf8')<32) throw new IntegrityError('XHS_STUDIO_INTEGRITY_KEY must be at least 32 UTF-8 bytes.',[{path:'environment.XHS_STUDIO_INTEGRITY_KEY',message:'Use a high-entropy secret of at least 32 bytes.'}]);
+  return {key,keyId:String(process.env.XHS_STUDIO_INTEGRITY_KEY_ID||'local-v1')};
+}
+
 function verifySnapshotEvidence(snapshot) {
-  if (!snapshot?.harvest) return {verified:false,unsigned:false,errors:[{path:'harvest',message:'snapshot harvest is missing'}]};
-  if (!snapshot.integrity) return {verified:false,unsigned:true,errors:[]};
-  const result=verifyIntegrity(snapshot.harvest,snapshot.integrity,SNAPSHOT_SCOPE);
+  if (!snapshot?.harvest) return {verified:false,unsigned:false,authenticated:false,checksumOnly:false,errors:[{path:'harvest',message:'snapshot harvest is missing'}]};
+  if (!snapshot.integrity) return {verified:false,unsigned:true,authenticated:false,checksumOnly:false,errors:[]};
+  const result=verifyIntegrity(snapshot.harvest,snapshot.integrity,SNAPSHOT_SCOPE,integrityOptions());
   if(!result.ok) throw new IntegrityError('Stored snapshot evidence failed integrity verification.',result.errors);
-  return {verified:true,unsigned:false,errors:[],digest:result.actualDigest};
+  return {
+    verified:true,
+    unsigned:false,
+    authenticated:result.authenticated,
+    checksumOnly:result.checksumOnly,
+    errors:[],
+    digest:result.actualDigest,
+    keyId:snapshot.integrity.keyId||null,
+  };
 }
 
 function hydrateSnapshot(snapshot) {
@@ -145,7 +159,7 @@ export async function listSnapshots(dataDir, projectId) {
       });
     } catch(err) {
       if(!(err instanceof IntegrityError)) throw err;
-      out.push({id:path.basename(file,'.json'),createdAt:null,integrityStatus:{verified:false,unsigned:false,errors:err.details}});
+      out.push({id:path.basename(file,'.json'),createdAt:null,integrityStatus:{verified:false,unsigned:false,authenticated:false,checksumOnly:false,errors:err.details}});
     }
   }
   out.sort((a,b) => {
@@ -174,7 +188,7 @@ export async function saveSnapshot(dataDir, projectId, raw) {
     projectId,
     createdAt: harvest.source.capturedAt || new Date().toISOString(),
     harvest,
-    integrity:makeIntegrity(harvest,SNAPSHOT_SCOPE),
+    integrity:makeIntegrity(harvest,SNAPSHOT_SCOPE,integrityOptions()),
     validation: { inputWarnings:inputValidation.warnings, warnings: validation.warnings },
   };
   snapshot.analysis = analyze(harvest);
