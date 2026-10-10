@@ -76,6 +76,17 @@ try{
   assert.match(brandedShare.html,/--accent:#0055aa/u);
   assert.match(brandedShare.html,/Demo/u);
 
+  await poll(()=>evaluate(`!!document.querySelector('#hostedDigest')`),{label:'weekly digest button',diagnostic});
+  await evaluate(`document.querySelector('#hostedDigest').click();true`);
+  await poll(()=>evaluate(`!!document.querySelector('#digestText')&&document.querySelector('#hostedPanel').innerText.includes('Weekly Client Digest')`),{attempts:240,label:'weekly digest panel',diagnostic});
+  const digestText=await evaluate(`document.querySelector('#digestText').innerText`);
+  assert.match(digestText,/Client Intelligence Brief/u);
+  assert.match(digestText,/North Star Agency/u);
+  assert.match(digestText,/Evidence status/u);
+  assert.match(digestText,/Coverage: 3 notes \/ 8 comments/u);
+  assert.match(digestText,/not population prevalence estimates/u);
+  assert.match(digestText,/Confidential client delivery/u);
+
   await evaluate(`document.querySelector('#hostedProjectActions').click();true`);
   await poll(()=>evaluate(`!!document.querySelector('#hostedSynthesis')&&!document.querySelector('#hostedSynthesis').disabled`),{label:'hosted project action panel',diagnostic});
   assert.equal(await evaluate(`!!document.querySelector('#hostedShare')&&!document.querySelector('#hostedShare').disabled`),true);
@@ -86,7 +97,7 @@ try{
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('pilot / active')&&!!document.querySelector('#hostedPortal')`),{label:'hosted billing controls',diagnostic});
   await sleep(150);
   assert.deepEqual(browserErrors,[],`browser errors: ${browserErrors.join(' | ')}`);
-  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,whiteLabelShare:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
+  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,whiteLabelShare:true,weeklyDigest:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
 }finally{
   try{socket?.close()}catch{}
   await terminate(chrome);await terminate(server);
