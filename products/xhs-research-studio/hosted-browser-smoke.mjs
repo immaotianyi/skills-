@@ -56,6 +56,17 @@ try{
   await poll(()=>evaluate(`!document.querySelector('#projectView').hidden&&document.querySelectorAll('#topNotes .note').length>=3`),{attempts:280,label:'hosted demo project render',diagnostic});
   assert.match(await evaluate(`document.querySelector('#projectName').innerText`),/Demo/);
 
+  await poll(()=>evaluate(`!!document.querySelector('#hostedTemplates')`),{label:'saved templates button',diagnostic});
+  await evaluate(`document.querySelector('#hostedTemplates').click();true`);
+  await poll(()=>evaluate(`!!document.querySelector('#savedTemplateCreate')&&document.querySelector('#hostedPanel').innerText.includes('Workspace 模板库')`),{attempts:240,label:'saved template library',diagnostic});
+  await evaluate(`(()=>{document.querySelector('#savedTemplateName').value='Browser Saved Research';document.querySelector('#savedTemplateDescription').value='Reusable safe research setup';document.querySelector('#savedTemplateCreate').click();return true})()`);
+  await poll(()=>evaluate(`Array.from(document.querySelectorAll('#templates .savedTemplate')).some(node=>node.innerText.includes('Browser Saved Research'))`),{attempts:240,label:'saved template sidebar button',diagnostic});
+  const appliedTemplate=await evaluate(`(()=>{const f=document.querySelector('#projectForm');f.elements.client.value='SHOULD CLEAR';f.elements.category.value='';f.elements.keywords.value='';f.elements.competitors.value='';const button=Array.from(document.querySelectorAll('#templates .savedTemplate')).find(node=>node.innerText.includes('Browser Saved Research'));button.click();return{client:f.elements.client.value,category:f.elements.category.value,keywords:f.elements.keywords.value,competitors:f.elements.competitors.value}})()`);
+  assert.equal(appliedTemplate.client,'');
+  assert.match(appliedTemplate.category,/护肤\/防晒/u);
+  assert.match(appliedTemplate.keywords,/敏感肌防晒/u);
+  assert.match(appliedTemplate.competitors,/A品牌/u);
+
   await poll(()=>evaluate(`!!document.querySelector('#hostedPortfolio')`),{label:'hosted portfolio button',diagnostic});
   await evaluate(`document.querySelector('#hostedPortfolio').click();true`);
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('Portfolio')&&document.querySelector('#hostedPanel').innerText.includes('Demo')&&document.querySelector('#hostedPanel').innerText.includes('有快照')`),{attempts:240,label:'agency portfolio panel',diagnostic});
@@ -97,7 +108,7 @@ try{
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('pilot / active')&&!!document.querySelector('#hostedPortal')`),{label:'hosted billing controls',diagnostic});
   await sleep(150);
   assert.deepEqual(browserErrors,[],`browser errors: ${browserErrors.join(' | ')}`);
-  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,whiteLabelShare:true,weeklyDigest:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
+  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),savedProjectTemplate:true,agencyPortfolio:true,whiteLabelShare:true,weeklyDigest:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
 }finally{
   try{socket?.close()}catch{}
   await terminate(chrome);await terminate(server);
