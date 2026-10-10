@@ -32,7 +32,7 @@ export function requireProjectWorkspace(req,store,project,{write=false,admin=fal
 }
 function mePayload(store,session){return {user:session.user,session:{expiresAt:session.expiresAt},workspaces:store.memberships(session.user.id).map(workspace=>({...workspace,entitlement:store.getEntitlement(workspace.id),usage:store.usage(workspace.id)}))}}
 function optionalSessionPayload(req,store){const token=sessionToken(req);if(!token)return null;const session=store.resolveSession(token);return session?mePayload(store,session):null}
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[ch]))}
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function sharedHtml(shared){const title=escapeHtml(shared.project?.name||'Shared Research Report'),markdown=escapeHtml(shared.markdown||'No report is available.');return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.6 system-ui;margin:0;background:#f6f6f4;color:#171717}main{max-width:960px;margin:auto;padding:40px 24px}article{background:white;border:1px solid #ddd;border-radius:14px;padding:28px}pre{white-space:pre-wrap;word-break:break-word;font:inherit}</style></head><body><main><article><pre>${markdown}</pre></article></main></body></html>`}
 
 export async function handlePublicShare({req,res,url,store,send,loadSharedReport}){
