@@ -63,8 +63,35 @@ export class RunService{
 
   async runs(projectId){return listRuns(this.dataDir,projectId)}
   async run(projectId,runId){return getRun(this.dataDir,projectId,runId)}
-  async schedules(projectId){return listSchedules(this.dataDir,projectId)}
-  async schedule(scheduleId){return getSchedule(this.dataDir,scheduleId)}
+
+  async #reconcileSchedule(schedule,{persist=false}={}){
+    if(!schedule?.projectId||!schedule?.lastRunId)return schedule;
+    const run=await getRun(this.dataDir,schedule.projectId,schedule.lastRunId).catch(()=>null);
+    if(!run||run.state===schedule.lastRunState)return schedule;
+    const reconciled={
+      ...schedule,
+      lastRunState:run.state,
+      lastRunAt:run.finishedAt||run.updatedAt||schedule.lastRunAt,
+      lastError:run.error?.message||null,
+    };
+    if(persist){
+      return recordScheduleRun(this.dataDir,schedule.id,{
+        runId:run.id,
+        state:run.state,
+        error:run.error?.message||null,
+        at:run.finishedAt||run.updatedAt||new Date(),
+      });
+    }
+    return reconciled;
+  }
+
+  async schedules(projectId){
+    const schedules=await listSchedules(this.dataDir,projectId);
+    return Promise.all(schedules.map(schedule=>this.#reconcileSchedule(schedule)));
+  }
+  async schedule(scheduleId){
+    return this.#reconcileSchedule(await getSchedule(this.dataDir,scheduleId));
+  }
   async createSchedule(projectId,input){return createSchedule(this.dataDir,projectId,input)}
   async updateSchedule(scheduleId,patch){return updateSchedule(this.dataDir,scheduleId,patch)}
 
@@ -230,6 +257,10 @@ export class RunService{
       if(queued.length&&!this.activeByProject.has(project.id))this.execute(project,queued[0]).catch(()=>{});
       for(const extra of queued.slice(1)){
         await transitionRun(this.dataDir,project.id,extra.id,RUN_STATES.CANCELLED,{stoppedBecause:'Cancelled during restart recovery because another queued run for the project was resumed.'}).catch(()=>{});
+      }
+      const schedules=await listSchedules(this.dataDir,project.id);
+      for(const schedule of schedules){
+        await this.#reconcileSchedule(schedule,{persist:true}).catch(()=>{});
       }
     }
   }
