@@ -8,6 +8,8 @@ import { analyze, diffHarvest, evidenceClusters, rankingSummary, markdownReport 
 import { HarvestValidationError, validateHarvestInput, validateNormalizedHarvest } from './lib/validation.mjs';
 import { ensureData, getProjects, mutateProjects, getProject, listSnapshots, loadSnapshot, saveSnapshot, makeId } from './lib/storage.mjs';
 import { buildEvidencePack, verifyEvidencePack } from './lib/evidence-pack.mjs';
+import { RunService } from './lib/run-service.mjs';
+import { handleProjectRunApi } from './lib/run-http.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.XHS_STUDIO_DATA || path.join(__dirname, 'data');
@@ -169,6 +171,7 @@ async function api(req,res,url) {
   if (url.pathname==='/api/health' && req.method==='GET') {
     return send(res,200,{ok:true,product:'XHS Research Studio',version:VERSION,time:new Date().toISOString()});
   }
+  if (url.pathname==='/api/run-system' && req.method==='GET') return send(res,200,runService.status());
   if (url.pathname==='/api/templates' && req.method==='GET') return send(res,200,{templates:PROJECT_TEMPLATES});
   if (url.pathname==='/api/projects' && req.method==='GET') return send(res,200,{projects:await getProjects(DATA_DIR)});
   if (url.pathname==='/api/projects' && req.method==='POST') {
@@ -205,6 +208,7 @@ async function api(req,res,url) {
     const project=await getProject(DATA_DIR,parts[2]);
     if (!project) return send(res,404,{error:'project not found'});
     if (parts.length===3 && req.method==='GET') return send(res,200,{project,snapshots:await listSnapshots(DATA_DIR,project.id)});
+    if (await handleProjectRunApi({req,res,parts,project,runService,readJson:bodyJson,send})) return;
     if (parts[3]==='plan' && req.method==='GET') return send(res,200,{projectId:project.id,plan:projectPlan(project)});
     if (parts[3]==='ingest' && req.method==='POST') {
       const raw=await bodyJson(req);
@@ -310,6 +314,8 @@ async function serveStatic(req,res,url) {
 }
 
 await ensureData(DATA_DIR);
+const runService=new RunService(DATA_DIR);
+await runService.start();
 const server=http.createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,`http://${req.headers.host||'localhost'}`);
@@ -321,3 +327,20 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 server.listen(PORT,HOST,()=>console.log(`XHS Research Studio ${VERSION} running at http://${HOST}:${PORT}`));
+
+let shuttingDown=false;
+async function shutdown(signal){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  console.log(`XHS Research Studio received ${signal}; stopping new requests, scheduler, and active executors.`);
+  const hardExit=setTimeout(()=>process.exit(1),5_000);
+  hardExit.unref();
+  server.close();
+  server.closeIdleConnections?.();
+  const result=await runService.stop({timeoutMs:4_000});
+  if(!result.settled)console.error(`Run shutdown timed out with ${result.active} active task(s).`);
+  clearTimeout(hardExit);
+  process.exit(result.settled?0:1);
+}
+process.once('SIGTERM',()=>{void shutdown('SIGTERM')});
+process.once('SIGINT',()=>{void shutdown('SIGINT')});
