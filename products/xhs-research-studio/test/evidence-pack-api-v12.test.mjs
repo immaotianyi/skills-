@@ -56,9 +56,9 @@ async function terminate(child){
   }
 }
 
-async function createProjectAndIngest(base){
+async function createProjectAndIngest(base,{name='Evidence Pack API v1.2'}={}){
   const projectResponse=await fetch(`${base}/api/projects`,{
-    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Evidence Pack API v1.2'}),
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name}),
   });
   assert.equal(projectResponse.status,201);
   const project=await projectResponse.json();
@@ -68,6 +68,13 @@ async function createProjectAndIngest(base){
   });
   assert.equal(ingestResponse.status,201);
   return {project, snapshot:await ingestResponse.json()};
+}
+
+function assertUnicodeDisposition(response){
+  const disposition=response.headers.get('content-disposition')||'';
+  assert.match(disposition,/^attachment; filename="[\x20-\x7e]+"; filename\*=UTF-8''/u);
+  assert.match(disposition,/%E8%AF%81%E6%8D%AE%E5%8C%85/u);
+  assert.equal(/[^\x00-\x7f]/u.test(disposition),false);
 }
 
 async function runServer(env,fn){
@@ -91,18 +98,24 @@ async function runServer(env,fn){
   }
 }
 
-test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 with explicit negotiation',{timeout:30000},async()=>{
+test('HTTP Evidence Pack keeps v1.1 compatibility, Unicode-safe downloads, and authenticated v1.2 negotiation',{timeout:30000},async()=>{
   await runServer({
     XHS_STUDIO_INTEGRITY_KEY:snapshotKey,
     XHS_STUDIO_INTEGRITY_KEY_ID:'snapshot-api-v1',
     XHS_STUDIO_PACK_INTEGRITY_KEY:packKey,
     XHS_STUDIO_PACK_INTEGRITY_KEY_ID:'pack-api-v1',
   },async base=>{
-    const {project,snapshot}=await createProjectAndIngest(base);
+    const {project,snapshot}=await createProjectAndIngest(base,{name:'证据包 API v1.2'});
     assert.equal(snapshot.integrityStatus.authenticated,true);
+
+    const csvResponse=await fetch(`${base}/api/projects/${project.id}/export.csv`);
+    assert.equal(csvResponse.status,200);
+    assertUnicodeDisposition(csvResponse);
+    assert.match(await csvResponse.text(),/noteId,title,author/u);
 
     const legacyResponse=await fetch(`${base}/api/projects/${project.id}/evidence-pack`);
     assert.equal(legacyResponse.status,200);
+    assertUnicodeDisposition(legacyResponse);
     const legacy=await legacyResponse.json();
     assert.equal(legacy.schemaVersion,'xhs-evidence-pack/1.1');
 
@@ -112,6 +125,7 @@ test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 
 
     const modernResponse=await fetch(`${base}/api/projects/${project.id}/evidence-pack?version=1.2&requireAuthenticated=1`);
     assert.equal(modernResponse.status,200);
+    assertUnicodeDisposition(modernResponse);
     assert.equal(modernResponse.headers.get('x-xhs-evidence-pack-version'),'1.2');
     assert.equal(modernResponse.headers.get('x-xhs-evidence-pack-authenticated'),'true');
     const modern=await modernResponse.json();
