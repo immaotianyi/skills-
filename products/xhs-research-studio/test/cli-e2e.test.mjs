@@ -54,14 +54,20 @@ test('CLI/API covers delivery flow, concurrent writes, and request limits', {tim
     assert.equal(ingest.analysis.coverage.notes,3);
 
     const reportPath=path.join(outDir,'report.md');
-    const packPath=path.join(outDir,'pack.json');
+    const packPath=path.join(outDir,'pack-v1.1.json');
+    const packV12Path=path.join(outDir,'pack-v1.2.json');
     const csvPath=path.join(outDir,'evidence.csv');
     assert.equal(await run('report',project.id,'--out',reportPath),reportPath);
     assert.equal(await run('pack',project.id,'--out',packPath),packPath);
+    assert.equal(await run('pack',project.id,'--version','1.2','--out',packV12Path),packV12Path);
     assert.equal(await run('csv',project.id,'--out',csvPath),csvPath);
     assert.match(await fs.readFile(reportPath,'utf8'),/Methodology \/ interpretation limits/);
     const pack=JSON.parse(await fs.readFile(packPath,'utf8'));
     assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.1');
+    const packV12=JSON.parse(await fs.readFile(packV12Path,'utf8'));
+    assert.equal(packV12.schemaVersion,'xhs-evidence-pack/1.2');
+    assert.equal(packV12.integrity.algorithm,'sha256');
+    assert.equal(packV12.integrity.authenticated,false);
     assert.match(await fs.readFile(csvPath,'utf8'),/noteId,title,author/);
 
     const concurrentCount=24;
