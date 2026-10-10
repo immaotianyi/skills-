@@ -34,8 +34,12 @@ export async function handleHostedMembersApi({req,res,url,store,readJson,send,en
   }
   if(parts[3]==='members'&&parts[4]&&parts.length===5&&req.method==='PATCH'){
     assertSameOrigin(req,env);
-    const body=await readJson(req);
-    store.setMemberRole(session.user.id,workspaceId,parts[4],String(body.role||''));
+    const body=await readJson(req),role=String(body.role||'');
+    if(role==='owner'){
+      const error=new Error('Workspace ownership cannot be granted through the generic member-role endpoint.');
+      error.code='OWNER_TRANSFER_REQUIRED';error.statusCode=409;throw error;
+    }
+    store.setMemberRole(session.user.id,workspaceId,parts[4],role);
     return send(res,200,{member:store.membership(parts[4],workspaceId)});
   }
 
