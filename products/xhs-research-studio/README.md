@@ -50,6 +50,8 @@ The container runs as a non-root user. Compose binds the service to localhost, u
 - Explicit gaps / login-required / risk-state display
 - Copyable Harvest plan for an Agent
 - Downloadable server-generated Evidence Pack JSON
+- Optional authenticated snapshot integrity and signed Evidence Pack export
+- Human-label signal evaluation CLI with precision/recall/F1, 95% confidence intervals, inter-rater agreement, and holdout-quality gates
 - Client-ready Markdown report
 - Print / Save-as-PDF client report
 - CSV evidence export
@@ -66,7 +68,55 @@ The product intentionally avoids stronger claims than the evidence supports:
 - The weighted engagement score is a review-priority heuristic, not a causal value/conversion model.
 - A note absent from a later sample is “not observed in the current sample”, not automatically “deleted”.
 
-See [`METHODOLOGY.md`](./METHODOLOGY.md) for methodology, references, safety constraints, and scientific-validation limits.
+See [`METHODOLOGY.md`](./METHODOLOGY.md) for methodology and scientific limits, and [`VALIDATION.md`](./VALIDATION.md) for the high-bar human-label validation protocol.
+
+## Evidence integrity
+
+There are deliberately two integrity levels:
+
+1. **Checksum-only (default):** snapshots receive a canonical SHA-256 checksum. This detects accidental or uncoordinated content changes but is **not cryptographic authentication**, because someone able to rewrite both data and checksum could recompute it.
+2. **Authenticated HMAC:** set an external high-entropy key and new snapshots use HMAC-SHA256. The key is not written into the snapshot or repository. Only this mode is reported as `authenticated: true`.
+
+For authenticated snapshot integrity:
+
+```bash
+export XHS_STUDIO_INTEGRITY_KEY='use-a-random-secret-with-at-least-32-bytes'
+export XHS_STUDIO_INTEGRITY_KEY_ID='snapshot-prod-v1'
+node products/xhs-research-studio/server.mjs
+```
+
+Do **not** commit the key. Supply it through your deployment secret manager/environment. A configured key shorter than 32 UTF-8 bytes is rejected.
+
+To create an authenticated Evidence Pack v1.2 from an authenticated snapshot:
+
+```bash
+export XHS_STUDIO_PACK_INTEGRITY_KEY='another-random-secret-at-least-32-bytes'
+export XHS_STUDIO_PACK_INTEGRITY_KEY_ID='pack-prod-v1'
+node products/xhs-research-studio/export-signed-pack.mjs PROJECT_ID --out signed-evidence-pack.json
+```
+
+The signed-pack command refuses checksum-only source snapshots. This avoids calling a plain checksum a cryptographic signature/authentication mechanism.
+
+## Signal validation
+
+The repository does not fabricate or bundle a fake “gold” evaluation corpus. To evaluate the rule-based signal layer against real human-reviewed data:
+
+```bash
+node products/xhs-research-studio/evaluate-signals.mjs labels.jsonl --out evaluation-report.json
+```
+
+The current high-bar machine gate requires, at minimum:
+
+- 400 unique holdout comments;
+- 50 positive examples per signal class;
+- at least 3 materially different categories;
+- two independent review records per item;
+- explicit adjudication of disagreements;
+- duplicate-content ratio ≤2%;
+- raw agreement ≥0.85 and Cohen's kappa ≥0.65 for every signal class;
+- required precision/recall thresholds evaluated using the **lower bound of a 95% Wilson confidence interval**, not only point estimates.
+
+Even when those machine gates pass, the evaluator intentionally does not self-approve a scientific claim. A human must verify review independence, holdout governance, provenance, category relevance, and leakage controls. See [`VALIDATION.md`](./VALIDATION.md).
 
 ## API
 
@@ -87,6 +137,8 @@ See [`METHODOLOGY.md`](./METHODOLOGY.md) for methodology, references, safety con
 - `GET /api/projects/:id/evidence-pack`
 - `GET /api/projects/:id/report?format=json`
 
+The current HTTP Evidence Pack endpoint remains the backward-compatible v1.1 delivery surface. Use `export-signed-pack.mjs` for authenticated v1.2 delivery until the API migration is separately completed and verified.
+
 Request bodies are size-bounded and malformed JSON/invalid Harvest structures return structured client errors rather than silent normalization or generic success.
 
 ## CLI
@@ -105,7 +157,7 @@ node products/xhs-research-studio/cli.mjs diff PROJECT_ID
 node products/xhs-research-studio/cli.mjs ranks PROJECT_ID
 node products/xhs-research-studio/cli.mjs evidence PROJECT_ID --term 辣眼
 node products/xhs-research-studio/cli.mjs report PROJECT_ID --out report.md
-node products/xhs-research-studio/cli.mjs pack PROJECT_ID --out evidence-pack.json
+node products/xhs-research-studio/cli.mjs pack PROJECT_ID --out evidence-pack-v1.1.json
 node products/xhs-research-studio/cli.mjs csv PROJECT_ID --out evidence.csv
 ```
 
@@ -119,6 +171,8 @@ Run the same major checks used by CI:
 node --check products/xhs-research-studio/server-v2.mjs
 node --check products/xhs-research-studio/public/app.js
 node --check products/xhs-research-studio/cli.mjs
+node --check products/xhs-research-studio/evaluate-signals.mjs
+node --check products/xhs-research-studio/export-signed-pack.mjs
 node --check products/xhs-research-studio/browser-smoke.mjs
 node --test products/xhs-research-studio/test/*.test.mjs
 node products/xhs-research-studio/smoke-test.mjs
@@ -129,9 +183,9 @@ The browser smoke uses a real headless Chrome/Chromium DevTools session: it open
 
 The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
 
-The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, API end-to-end flow, CLI delivery/export flow, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
+The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior, Evidence Pack verification, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
 
-Automated test success is engineering evidence, not scientific validation of consumer-insight claims. A separately reviewed labeled corpus is required before claiming validated classifier accuracy; see `METHODOLOGY.md`.
+Automated test success is engineering evidence, not scientific validation of consumer-insight claims. Real semantic validation still requires the independently reviewed holdout described above.
 
 ## Product boundary
 
