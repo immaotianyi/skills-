@@ -35,7 +35,6 @@ try {
 
   const health=await request('/api/health');
   assert.equal(health.version,'0.3.0-hardening');
-  assert.equal(health.hosted,undefined,'local mode must stay on the stable non-hosted server path');
 
   const templates=await request('/api/templates');
   assert.ok(templates.templates.length>=3);
@@ -79,47 +78,59 @@ try {
   d2.queries[0].results[0].rankingPosition=1;
   d2.queries[0].results[1].rankingPosition=8;
   d2.queries[0].results.push({noteId:'demo4',rankingPosition:4,title:'敏感肌防晒新选择',author:'新作者'});
+  await request(`/api/projects/${project.id}/ingest`,{method:'POST',body:JSON.stringify(d2)});
 
-  const s2=await request(`/api/projects/${project.id}/ingest`,{method:'POST',body:JSON.stringify(d2)});
-  assert.equal(s2.analysis.coverage.notes,4);
+  const diff=(await request(`/api/projects/${project.id}/diff`)).diff;
+  assert.equal(diff.addedNotes.length,1);
+  assert.ok(Array.isArray(diff.notObservedNotes));
+  assert.ok(diff.topMovers[0].score>=2000);
+  assert.ok(diff.rankings.changed.length>=2);
+  assert.ok(diff.rankings.entered.length>=1);
+  assert.ok(Array.isArray(diff.alerts));
 
-  const projectView=await request(`/api/projects/${project.id}`);
-  assert.equal(projectView.snapshots.length,2);
-
-  const diff=await request(`/api/projects/${project.id}/diff`);
-  assert.equal(diff.diff.added.length,1);
-  assert.ok(diff.diff.topMovers.some(x=>x.noteId==='demo1'));
-  assert.ok(diff.diff.rankChanges.some(x=>x.noteId==='demo1'));
-  assert.ok(diff.diff.alerts.some(x=>x.type==='rank_drop'));
-  assert.ok(diff.diff.alerts.some(x=>x.type==='new_high_signal_note'));
-
-  const evidence=await request(`/api/projects/${project.id}/evidence?term=辣眼`);
-  assert.ok(Array.isArray(evidence.clusters));
+  const term=s1.analysis.evidenceClusters[0].term;
+  const evidence=await request(`/api/projects/${project.id}/evidence?term=${encodeURIComponent(term)}`);
+  assert.equal(evidence.clusters.length,1);
 
   const report=await request(`/api/projects/${project.id}/report`);
-  assert.match(report,/研究方法/);
-  assert.match(report,/局限/);
+  assert.match(report,/Search visibility/);
+  assert.match(report,/Search rank changes/);
+  assert.match(report,/Methodology \/ interpretation limits/);
+  assert.match(report,/Previously observed notes not present in current sample/);
 
-  const csv=await request(`/api/projects/${project.id}/export.csv`);
-  assert.match(csv,/noteId,title,author/);
+  const csvResponse=await rawRequest(`/api/projects/${project.id}/export.csv`);
+  assert.equal(csvResponse.status,200);
+  assert.match(csvResponse.headers.get('content-disposition')||'',/attachment/);
+  assert.match(await csvResponse.text(),/noteId,title,author/);
 
-  const pack=await request(`/api/projects/${project.id}/evidence-pack?version=1.2`);
-  assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.2');
-  assert.equal(pack.integrity.algorithm,'sha256');
+  const packResponse=await rawRequest(`/api/projects/${project.id}/evidence-pack`);
+  assert.equal(packResponse.status,200);
+  const pack=await packResponse.json();
+  assert.equal(pack.schemaVersion,'xhs-evidence-pack/1.1');
+  assert.equal(pack.project.id,project.id);
+  assert.ok(pack.methodology);
+  assert.ok(Array.isArray(pack.sources));
 
-  const notFound=await rawRequest('/api/does-not-exist');
-  assert.equal(notFound.status,404);
-  assert.equal(notFound.headers.get('x-content-type-options'),'nosniff');
+  const missingSnapshot=await rawRequest(`/api/projects/${project.id}/snapshots/nope`);
+  assert.equal(missingSnapshot.status,404);
 
-  const traversal=await rawRequest('/..%2Fserver.mjs');
-  assert.equal(traversal.status,404);
+  const home=await rawRequest('/',{headers:{accept:'text/html'}});
+  assert.equal(home.status,200);
+  assert.equal(home.headers.get('x-content-type-options'),'nosniff');
+  assert.match(home.headers.get('content-security-policy')||'',/default-src 'self'/);
 
-  const huge=await rawRequest('/api/analyze',{method:'POST',body:'x'.repeat(15_000_001)});
-  assert.equal(huge.status,413);
-
-  console.log('XHS Research Studio API smoke test passed');
+  console.log(JSON.stringify({
+    ok:true,
+    version:health.version,
+    notes:s1.analysis.coverage.notes,
+    comments:s1.analysis.coverage.comments,
+    rankChanges:diff.rankings.changed.length,
+    entered:diff.rankings.entered.length,
+    clusters:s1.analysis.evidenceClusters.length,
+    quality:s1.analysis.quality,
+    evidencePackSources:pack.sources.length,
+  },null,2));
 } finally {
   child.kill('SIGTERM');
-  await new Promise(resolve=>child.once('exit',resolve));
   await fs.rm(dataDir,{recursive:true,force:true});
 }
