@@ -67,7 +67,8 @@ try {
   assert.ok(s1.analysis.evidenceClusters.length>0);
   assert.equal(s1.analysis.evidenceClusters.every(x=>x.method==='lexical-comment-frequency'),true);
   assert.equal(s1.analysis.signals.complaints.examples.some(x=>x.content.includes('眼睛不刺痛，通勤很好用')),false);
-  assert.equal(s1.analysis.quality.status,'caution');
+  assert.equal(s1.analysis.quality.status,'good');
+  assert.ok(s1.analysis.quality.warnings.some(x=>x.includes('coverage gap')));
   assert.ok(s1.analysis.methodology.signalModel.includes('not a trained sentiment model'));
 
   const d2=structuredClone(demo);
