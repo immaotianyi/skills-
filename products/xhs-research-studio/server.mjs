@@ -1,2 +1,3 @@
 #!/usr/bin/env node
-import './server-v2.mjs';
+const hosted=['1','true','yes'].includes(String(process.env.XHS_STUDIO_HOSTED||'').toLowerCase());
+await import(hosted?'./server-v3.mjs':'./server-v2.mjs');
