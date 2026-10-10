@@ -1,7 +1,7 @@
 const DEFAULT_BRANDING=Object.freeze({agencyName:'',reportTitle:'',accentColor:'#171717',footerText:''});
 const HEX_RE=/^#[0-9a-f]{6}$/iu;
 
-function cleanText(value,max){return String(value??'').trim().replace(/[\u0000-\u001f\u007f]/gu,' ').replace(/\s+/gu,' ').slice(0,max)}
+function cleanText(value,max){return String(value??'').replace(/[\u0000-\u001f\u007f]/gu,' ').replace(/\s+/gu,' ').trim().slice(0,max)}
 function cleanColor(value){const color=String(value||'').trim().toLowerCase();return HEX_RE.test(color)?color:DEFAULT_BRANDING.accentColor}
 
 export class BrandingError extends Error{
