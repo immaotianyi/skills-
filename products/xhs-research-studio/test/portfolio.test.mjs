@@ -39,7 +39,7 @@ test('portfolio row prioritizes diff alerts and preserves bounded evidence metad
   assert.ok(types.has('rank-drop'));
   assert.ok(types.has('complaint-growth'));
   assert.ok(types.has('new-high-signal-note'));
-  assert.equal(row.attentionLevel,'medium');
+  assert.equal(row.attentionLevel,'high','a five-position observed rank drop is a high-priority alert');
   assert.equal(row.needsAttention,true);
   assert.ok(row.alerts.every(alert=>!('comments' in alert)&&!('notes' in alert)),'portfolio must expose triage metadata, not duplicate raw evidence');
 });
