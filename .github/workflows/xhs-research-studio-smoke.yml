@@ -1,4 +1,4 @@
-name: XHS Research Studio Smoke
+name: XHS Research Studio Quality Gate
 
 on:
   pull_request:
@@ -16,9 +16,9 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  quality-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,5 +30,64 @@ jobs:
           node --check products/xhs-research-studio/server-v2.mjs
           node --check products/xhs-research-studio/public/app.js
           node --check products/xhs-research-studio/cli.mjs
-      - name: End-to-end smoke test
+          node --check products/xhs-research-studio/browser-smoke.mjs
+          node --check products/xhs-research-studio/lib/normalize.mjs
+          node --check products/xhs-research-studio/lib/analysis.mjs
+          node --check products/xhs-research-studio/lib/storage.mjs
+          node --check products/xhs-research-studio/lib/validation.mjs
+          node --check products/xhs-research-studio/smoke-test.mjs
+      - name: Core unit, security, compatibility, and scale tests
+        run: node --test products/xhs-research-studio/test/*.test.mjs
+      - name: End-to-end API smoke test
         run: node products/xhs-research-studio/smoke-test.mjs
+      - name: Headless Chrome UI end-to-end smoke
+        run: node products/xhs-research-studio/browser-smoke.mjs
+      - name: Build hardened container
+        run: docker build -t xhs-research-studio:test products/xhs-research-studio
+      - name: Container non-root, persistence, and restart gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume=xhs-studio-test-data
+          name=xhs-research-studio-test
+          cleanup() {
+            docker stop "$name" >/dev/null 2>&1 || true
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker volume create "$volume" >/dev/null
+          start_container() {
+            docker run -d --rm --name "$name" \
+              --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
+              -v "$volume":/data -p 127.0.0.1:55419:5418 \
+              xhs-research-studio:test >/dev/null
+          }
+          wait_health() {
+            for i in {1..40}; do
+              if curl --fail --silent http://127.0.0.1:55419/api/health > /tmp/xhs-health.json; then
+                cat /tmp/xhs-health.json
+                return 0
+              fi
+              sleep 0.25
+            done
+            echo 'container health endpoint did not become ready' >&2
+            docker logs "$name" || true
+            return 1
+          }
+          start_container
+          wait_health
+          uid="$(docker exec "$name" id -u)"
+          test "$uid" != "0"
+          echo "container uid=$uid"
+          curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"name":"Container Persisted Project","keywords":["防晒"]}' \
+            http://127.0.0.1:55419/api/projects > /tmp/xhs-project.json
+          grep -q 'Container Persisted Project' /tmp/xhs-project.json
+          docker stop "$name" >/dev/null
+          start_container
+          wait_health
+          curl --fail --silent http://127.0.0.1:55419/api/projects > /tmp/xhs-projects.json
+          grep -q 'Container Persisted Project' /tmp/xhs-projects.json
+          echo 'container persistence restart check passed'

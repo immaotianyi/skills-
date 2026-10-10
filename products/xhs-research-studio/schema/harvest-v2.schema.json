@@ -8,11 +8,11 @@
     "schemaVersion": {"const": "2.0"},
     "source": {
       "type": "object",
-      "required": ["platform", "capturedAt", "entry"],
+      "required": ["platform", "capturedAt", "entry", "captureMethod"],
       "properties": {
         "platform": {"const": "xiaohongshu"},
-        "capturedAt": {"type": "string"},
-        "entry": {"enum": ["search", "profile", "note", "shortlink", "topic", "feed", "mixed"]},
+        "capturedAt": {"type": "string", "format": "date-time"},
+        "entry": {"enum": ["search", "profile", "note", "shortlink", "topic", "feed", "mixed", "unknown"]},
         "keyword": {"type": "string"},
         "sourceUrl": {"type": "string"},
         "captureMethod": {"enum": ["initial_state", "rendered_dom", "ocr", "mixed", "unknown"]},
@@ -24,13 +24,42 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["noteId", "title", "author", "stats"],
+        "required": ["noteId", "author", "stats", "captureMethod", "confidence"],
         "properties": {
-          "noteId": {"type": "string"}, "title": {"type": "string"}, "desc": {"type": "string"},
-          "type": {"type": "string"}, "publishTime": {}, "lastUpdateTime": {}, "ipLocation": {"type": "string"},
-          "tags": {"type": "array"}, "atUsers": {"type": "array"}, "authorStatement": {"type": "string"},
-          "author": {"type": "object"}, "stats": {"type": "object"}, "media": {"type": "object"},
-          "sourceUrl": {"type": "string"}, "captureMethod": {"type": "string"},
+          "noteId": {"type": "string", "minLength": 1},
+          "title": {"type": "string"},
+          "desc": {"type": "string"},
+          "type": {"type": "string"},
+          "publishTime": {},
+          "lastUpdateTime": {},
+          "ipLocation": {"type": "string"},
+          "tags": {"type": "array"},
+          "atUsers": {"type": "array"},
+          "authorStatement": {"type": "string"},
+          "author": {
+            "type": "object",
+            "properties": {
+              "userId": {"type": "string"},
+              "nickname": {"type": "string"},
+              "profileUrl": {"type": "string"}
+            },
+            "additionalProperties": true
+          },
+          "stats": {
+            "type": "object",
+            "required": ["likes", "collects", "comments", "shares"],
+            "properties": {
+              "likes": {"type": "integer", "minimum": 0},
+              "collects": {"type": "integer", "minimum": 0},
+              "comments": {"type": "integer", "minimum": 0},
+              "shares": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": true
+          },
+          "media": {"type": "object"},
+          "comments": {"type": "array"},
+          "sourceUrl": {"type": "string"},
+          "captureMethod": {"enum": ["initial_state", "rendered_dom", "ocr", "mixed", "unknown"]},
           "confidence": {"type": "number", "minimum": 0, "maximum": 1}
         },
         "additionalProperties": true
@@ -42,9 +71,15 @@
         "type": "object",
         "required": ["content"],
         "properties": {
-          "id": {"type": "string"}, "noteId": {"type": "string"}, "parentCommentId": {"type": "string"},
-          "content": {"type": "string"}, "likes": {"type": "number"}, "isAuthor": {"type": "boolean"},
-          "user": {"type": ["string", "object"]}, "publishedAt": {}, "sourceUrl": {"type": "string"}
+          "id": {"type": "string"},
+          "noteId": {"type": "string"},
+          "parentCommentId": {"type": "string"},
+          "content": {"type": "string", "minLength": 1},
+          "likes": {"type": "integer", "minimum": 0},
+          "isAuthor": {"type": "boolean"},
+          "user": {"type": ["string", "object"]},
+          "publishedAt": {},
+          "sourceUrl": {"type": "string"}
         },
         "additionalProperties": true
       }
@@ -54,10 +89,25 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["keyword"],
+        "required": ["keyword", "capturedAt", "results"],
         "properties": {
-          "keyword": {"type": "string"}, "capturedAt": {"type": "string"},
-          "results": {"type": "array", "items": {"type": "object", "properties": {"noteId": {"type": "string"}, "rankingPosition": {"type": "integer", "minimum": 1}, "sourceUrl": {"type": "string"}}, "additionalProperties": true}}
+          "keyword": {"type": "string", "minLength": 1},
+          "capturedAt": {"type": "string", "format": "date-time"},
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["rankingPosition"],
+              "properties": {
+                "noteId": {"type": "string"},
+                "rankingPosition": {"type": "integer", "minimum": 1},
+                "sourceUrl": {"type": "string"},
+                "title": {"type": "string"},
+                "author": {"type": "string"}
+              },
+              "additionalProperties": true
+            }
+          }
         },
         "additionalProperties": true
       }
@@ -66,10 +116,14 @@
       "type": "object",
       "required": ["gaps", "loginRequired", "riskState"],
       "properties": {
-        "collected": {"type": "integer"}, "deduped": {"type": "integer"}, "gaps": {"type": "array"},
+        "inputSchemaVersion": {"type": "string"},
+        "collected": {"type": "integer", "minimum": 0},
+        "deduped": {"type": "integer", "minimum": 0},
+        "gaps": {"type": "array"},
         "loginRequired": {"type": "boolean"},
         "riskState": {"enum": ["NORMAL", "THROTTLED", "LOGIN_REQUIRED", "CAPTCHA", "ACCESS_DENIED", "BLOCKED"]},
-        "sampleBudget": {"type": "integer"}, "stoppedBecause": {"type": "string"}
+        "sampleBudget": {"type": ["integer", "null"], "minimum": 0},
+        "stoppedBecause": {"type": "string"}
       },
       "additionalProperties": true
     }
