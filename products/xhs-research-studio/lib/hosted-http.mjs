@@ -4,6 +4,7 @@ import { assertLoginAllowed, recordLoginFailure, recordLoginSuccess, assertRegis
 const COOKIE='xhs_studio_session';
 const DEFAULT_SHARE_TTL_SECONDS=7*24*3600;
 const MAX_SHARE_TTL_SECONDS=30*24*3600;
+const SHARE_NO_STORE_HEADERS=Object.freeze({'cache-control':'private, no-store, max-age=0','pragma':'no-cache','x-content-type-options':'nosniff'});
 
 export class HostedHttpError extends Error{
   constructor(statusCode,message,code='HOSTED_HTTP_ERROR'){super(message);this.statusCode=statusCode;this.code=code}
@@ -31,7 +32,7 @@ export function requireProjectWorkspace(req,store,project,{write=false,admin=fal
 }
 function mePayload(store,session){return {user:session.user,session:{expiresAt:session.expiresAt},workspaces:store.memberships(session.user.id).map(workspace=>({...workspace,entitlement:store.getEntitlement(workspace.id),usage:store.usage(workspace.id)}))}}
 function optionalSessionPayload(req,store){const token=sessionToken(req);if(!token)return null;const session=store.resolveSession(token);return session?mePayload(store,session):null}
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[ch]))}
 function sharedHtml(shared){const title=escapeHtml(shared.project?.name||'Shared Research Report'),markdown=escapeHtml(shared.markdown||'No report is available.');return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.6 system-ui;margin:0;background:#f6f6f4;color:#171717}main{max-width:960px;margin:auto;padding:40px 24px}article{background:white;border:1px solid #ddd;border-radius:14px;padding:28px}pre{white-space:pre-wrap;word-break:break-word;font:inherit}</style></head><body><main><article><pre>${markdown}</pre></article></main></body></html>`}
 
 export async function handlePublicShare({req,res,url,store,send,loadSharedReport}){
@@ -39,8 +40,8 @@ export async function handlePublicShare({req,res,url,store,send,loadSharedReport
   if(!token||req.method!=='GET')return false;
   const share=store.resolveShare(token);if(!share)throw new HostedHttpError(404,'Shared report not found or expired.','SHARE_NOT_FOUND');
   const shared=await loadSharedReport(share);if(!shared)throw new HostedHttpError(404,'Shared report not found.','SHARE_NOT_FOUND');
-  if(apiMatch){send(res,200,{share:{id:share.id,expiresAt:share.expiresAt},...shared});return true}
-  send(res,200,sharedHtml(shared),'text/html; charset=utf-8',{'content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",'x-robots-tag':'noindex, nofollow'});return true;
+  if(apiMatch){send(res,200,{share:{id:share.id,expiresAt:share.expiresAt},...shared},'application/json; charset=utf-8',SHARE_NO_STORE_HEADERS);return true}
+  send(res,200,sharedHtml(shared),'text/html; charset=utf-8',{...SHARE_NO_STORE_HEADERS,'content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",'x-robots-tag':'noindex, nofollow'});return true;
 }
 
 export async function handleHostedApi({req,res,url,store,readJson,readRaw,send,getProject,getProjects,env=process.env}){
