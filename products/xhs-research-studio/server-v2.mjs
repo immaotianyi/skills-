@@ -7,6 +7,7 @@ import { normalizeHarvest, safeText } from './lib/normalize.mjs';
 import { analyze, diffHarvest, evidenceClusters, rankingSummary, markdownReport } from './lib/analysis.mjs';
 import { HarvestValidationError, validateHarvestInput, validateNormalizedHarvest } from './lib/validation.mjs';
 import { ensureData, getProjects, mutateProjects, getProject, listSnapshots, loadSnapshot, saveSnapshot, makeId } from './lib/storage.mjs';
+import { buildEvidencePack, verifyEvidencePack } from './lib/evidence-pack.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.XHS_STUDIO_DATA || path.join(__dirname, 'data');
@@ -46,7 +47,7 @@ function evidenceCsv(h) {
   return rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n';
 }
 
-function evidencePack(project, snapshot) {
+function legacyEvidencePack(project, snapshot) {
   const analysis = snapshot.analysis || analyze(snapshot.harvest);
   const h = snapshot.harvest;
   return {
@@ -64,6 +65,22 @@ function evidencePack(project, snapshot) {
     gaps:analysis.coverage.gaps,
     sources:(h.notes || []).map(n=>({noteId:n.noteId,title:n.title,sourceUrl:n.sourceUrl,captureMethod:n.captureMethod,confidence:n.confidence})),
   };
+}
+
+function packIntegrityOptions() {
+  const key=String(process.env.XHS_STUDIO_PACK_INTEGRITY_KEY||'');
+  if(key && Buffer.byteLength(key,'utf8')<32) throw new Error('XHS_STUDIO_PACK_INTEGRITY_KEY must be at least 32 UTF-8 bytes');
+  return key ? {key,keyId:String(process.env.XHS_STUDIO_PACK_INTEGRITY_KEY_ID||'pack-v1')} : {};
+}
+
+function requestedPackVersion(url) {
+  const version=safeText(url.searchParams.get('version')||'1.1');
+  if(version==='1.1'||version==='1.2') return version;
+  throw new HttpError(400,`Unsupported Evidence Pack version: ${version}`);
+}
+
+function requiresAuthenticatedPack(url) {
+  return ['1','true','yes'].includes(safeText(url.searchParams.get('requireAuthenticated')).toLowerCase());
 }
 
 function projectPlan(project) {
@@ -230,7 +247,28 @@ async function api(req,res,url) {
     }
     if (parts[3]==='evidence-pack' && req.method==='GET') {
       const {snapshot}=await latestSnapshot(project.id,url.searchParams.get('snapshot')||'');
-      return send(res,200,evidencePack(project,snapshot),'application/json; charset=utf-8',{'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack.json"`});
+      const version=requestedPackVersion(url);
+      const requireAuthenticated=requiresAuthenticatedPack(url);
+      if(version==='1.1') {
+        if(requireAuthenticated) throw new HttpError(409,'Authenticated Evidence Pack requires version 1.2; refusing to downgrade to v1.1.');
+        return send(res,200,legacyEvidencePack(project,snapshot),'application/json; charset=utf-8',{
+          'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack-v1.1.json"`,
+          'x-xhs-evidence-pack-version':'1.1',
+          'x-xhs-evidence-pack-authenticated':'false',
+        });
+      }
+      const options=packIntegrityOptions();
+      const pack=buildEvidencePack(project,snapshot,options);
+      const verification=verifyEvidencePack(pack,options);
+      if(!verification.ok) throw new Error(`Generated Evidence Pack failed self-verification: ${JSON.stringify(verification.errors)}`);
+      if(requireAuthenticated && (snapshot.integrityStatus?.authenticated!==true || verification.authenticated!==true)) {
+        throw new HttpError(409,'Authenticated Evidence Pack requires both an authenticated source snapshot and a configured Pack HMAC key.');
+      }
+      return send(res,200,pack,'application/json; charset=utf-8',{
+        'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack-v1.2.json"`,
+        'x-xhs-evidence-pack-version':'1.2',
+        'x-xhs-evidence-pack-authenticated':String(verification.authenticated===true),
+      });
     }
     if (parts[3]==='report' && req.method==='GET') {
       const {snaps,sid,snapshot}=await latestSnapshot(project.id,url.searchParams.get('snapshot')||'');

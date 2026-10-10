@@ -49,8 +49,8 @@ The container runs as a non-root user. Compose binds the service to localhost, u
 - Source/evidence table with capture method and confidence
 - Explicit gaps / login-required / risk-state display
 - Copyable Harvest plan for an Agent
-- Downloadable server-generated Evidence Pack JSON
-- Optional authenticated snapshot integrity and signed Evidence Pack export
+- Backward-compatible Evidence Pack v1.1 plus negotiated HTTP Evidence Pack v1.2
+- Optional authenticated snapshot integrity and HMAC-authenticated Evidence Pack v1.2 delivery
 - Human-label signal evaluation CLI with precision/recall/F1, 95% confidence intervals, inter-rater agreement, and holdout-quality gates
 - Client-ready Markdown report
 - Print / Save-as-PDF client report
@@ -74,8 +74,8 @@ See [`METHODOLOGY.md`](./METHODOLOGY.md) for methodology and scientific limits, 
 
 There are deliberately two integrity levels:
 
-1. **Checksum-only (default):** snapshots receive a canonical SHA-256 checksum. This detects accidental or uncoordinated content changes but is **not cryptographic authentication**, because someone able to rewrite both data and checksum could recompute it.
-2. **Authenticated HMAC:** set an external high-entropy key and new snapshots use HMAC-SHA256. The key is not written into the snapshot or repository. Only this mode is reported as `authenticated: true`.
+1. **Checksum-only (default):** snapshots and v1.2 packs can receive canonical SHA-256 checksums. This detects accidental or uncoordinated content changes but is **not cryptographic authentication**, because someone able to rewrite both data and checksum could recompute it.
+2. **Authenticated HMAC:** set external high-entropy keys and new snapshots / v1.2 packs use HMAC-SHA256. Keys are not written into the snapshot, pack, or repository. Only this mode is reported as `authenticated: true`.
 
 For authenticated snapshot integrity:
 
@@ -99,15 +99,36 @@ export XHS_STUDIO_INTEGRITY_KEYRING='{"snapshot-prod-v1":"old-secret-at-least-32
 
 The current key wins when its `keyId` matches a snapshot. The keyring is used only for verification of older HMAC records; it is never used to sign new snapshots. Removing an old key from the keyring intentionally makes snapshots authenticated with that retired key unverifiable, so retain historical keys according to your evidence-retention policy. Compose passes all three variables through to the container.
 
-To create an authenticated Evidence Pack v1.2 from an authenticated snapshot:
+### Evidence Pack v1.2
+
+The backward-compatible HTTP endpoint still defaults to v1.1. Request v1.2 explicitly:
+
+```bash
+curl 'http://127.0.0.1:5418/api/projects/PROJECT_ID/evidence-pack?version=1.2'
+```
+
+Without a Pack key, v1.2 is checksum-only. To make HTTP v1.2 output HMAC-authenticated, configure:
 
 ```bash
 export XHS_STUDIO_PACK_INTEGRITY_KEY='another-random-secret-at-least-32-bytes'
 export XHS_STUDIO_PACK_INTEGRITY_KEY_ID='pack-prod-v1'
+```
+
+For a delivery that must be cryptographically authenticated end to end, require both an authenticated source snapshot and an authenticated Pack:
+
+```bash
+curl 'http://127.0.0.1:5418/api/projects/PROJECT_ID/evidence-pack?version=1.2&requireAuthenticated=1'
+```
+
+That request fails closed with HTTP 409 unless both conditions are met. The response also exposes `X-XHS-Evidence-Pack-Version` and `X-XHS-Evidence-Pack-Authenticated` headers.
+
+The standalone exporter remains available for file-oriented authenticated delivery:
+
+```bash
 node products/xhs-research-studio/export-signed-pack.mjs PROJECT_ID --out signed-evidence-pack.json
 ```
 
-The signed-pack command refuses checksum-only source snapshots. This avoids calling a plain checksum a cryptographic signature/authentication mechanism.
+The signed-pack command refuses checksum-only source snapshots. This avoids calling a plain checksum a cryptographic signature/authentication mechanism. Compose passes the Pack key and key ID into the container when configured.
 
 ## Signal validation
 
@@ -146,10 +167,11 @@ Even when those machine gates pass, the evaluator intentionally does not self-ap
 - `GET /api/projects/:id/ranks`
 - `GET /api/projects/:id/evidence?term=`
 - `GET /api/projects/:id/export.csv`
-- `GET /api/projects/:id/evidence-pack`
+- `GET /api/projects/:id/evidence-pack` (defaults to v1.1)
+- `GET /api/projects/:id/evidence-pack?version=1.2[&requireAuthenticated=1]`
 - `GET /api/projects/:id/report?format=json`
 
-The current HTTP Evidence Pack endpoint remains the backward-compatible v1.1 delivery surface. Use `export-signed-pack.mjs` for authenticated v1.2 delivery until the API migration is separately completed and verified.
+Unsupported Evidence Pack versions return HTTP 400. `requireAuthenticated=1` returns HTTP 409 instead of silently downgrading when the source snapshot or Pack lacks HMAC authentication.
 
 Request bodies are size-bounded and malformed JSON/invalid Harvest structures return structured client errors rather than silent normalization or generic success.
 
@@ -170,6 +192,8 @@ node products/xhs-research-studio/cli.mjs ranks PROJECT_ID
 node products/xhs-research-studio/cli.mjs evidence PROJECT_ID --term 辣眼
 node products/xhs-research-studio/cli.mjs report PROJECT_ID --out report.md
 node products/xhs-research-studio/cli.mjs pack PROJECT_ID --out evidence-pack-v1.1.json
+node products/xhs-research-studio/cli.mjs pack PROJECT_ID --version 1.2 --out evidence-pack-v1.2.json
+node products/xhs-research-studio/cli.mjs pack PROJECT_ID --version 1.2 --require-authenticated 1 --out authenticated-pack.json
 node products/xhs-research-studio/cli.mjs csv PROJECT_ID --out evidence.csv
 ```
 
@@ -195,7 +219,7 @@ The browser smoke uses a real headless Chrome/Chromium DevTools session: it open
 
 The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
 
-The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior including historical-key rotation, Evidence Pack verification, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
+The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior including historical-key rotation, Evidence Pack verification, negotiated HTTP v1.1/v1.2 delivery and fail-closed authenticated mode, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
 
 Automated test success is engineering evidence, not scientific validation of consumer-insight claims. Real semantic validation still requires the independently reviewed holdout described above.
 
