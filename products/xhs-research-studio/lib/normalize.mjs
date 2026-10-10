@@ -13,6 +13,18 @@ export function safeText(v='') {
   return String(v ?? '').trim();
 }
 
+export function safeHttpUrl(v='') {
+  const raw = safeText(v);
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (!['http:','https:'].includes(url.protocol)) return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
 export function num(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
   const raw = safeText(v).replace(/,/g, '').replace(/[+＋]\s*$/u, '');
@@ -29,9 +41,7 @@ export function num(v) {
 }
 
 function normalizeDateTime(v, fallback='') {
-  if (typeof v === 'string' && v.trim() && Number.isFinite(Date.parse(v))) {
-    return new Date(v).toISOString();
-  }
+  if (typeof v === 'string' && v.trim() && Number.isFinite(Date.parse(v))) return new Date(v).toISOString();
   if (fallback && Number.isFinite(Date.parse(fallback))) return new Date(fallback).toISOString();
   return new Date().toISOString();
 }
@@ -76,22 +86,26 @@ function normalizeComment(c={}, noteId='', noteSourceUrl='') {
     isAuthor: Boolean(c.isAuthor ?? c.is_author ?? (Array.isArray(c.showTags) && c.showTags.includes('is_author'))),
     user,
     publishedAt: c.publishedAt ?? c.createTime ?? null,
-    sourceUrl: safeText(c.sourceUrl || noteSourceUrl),
+    sourceUrl: safeHttpUrl(c.sourceUrl || noteSourceUrl),
   };
 }
 
 function normalizeAuthor(author={}) {
+  if (typeof author === 'string') {
+    return { userId:'', nickname:safeText(author), profileUrl:'' };
+  }
+  const value = author && typeof author === 'object' ? author : {};
   return {
-    userId: safeText(author.userId || author.id),
-    nickname: safeText(author.nickname || author.nickName || author.name),
-    profileUrl: safeText(author.profileUrl || author.url),
+    userId: safeText(value.userId || value.id),
+    nickname: safeText(value.nickname || value.nickName || value.name),
+    profileUrl: safeHttpUrl(value.profileUrl || value.url),
   };
 }
 
 function normalizeNote(n={}, source={}) {
   const stats = n.stats || n.interactInfo || {};
   const noteId = safeText(n.noteId || n.id);
-  const sourceUrl = safeText(n.sourceUrl || n.url);
+  const sourceUrl = safeHttpUrl(n.sourceUrl || n.url);
   const captureMethod = normalizeCaptureMethod(n.captureMethod || source.captureMethod || 'unknown');
   const tags = (Array.isArray(n.tags) ? n.tags : Array.isArray(n.tagList) ? n.tagList : [])
     .map(t => typeof t === 'string' ? t : safeText(t?.name || t?.title))
@@ -137,15 +151,16 @@ function normalizeQuery(q={}, fallbackCapturedAt='') {
     if (!noteId && !title) continue;
     const rawRank = Number(r.rankingPosition ?? r.rank ?? i + 1);
     const rankingPosition = Number.isInteger(rawRank) && rawRank > 0 ? rawRank : i + 1;
-    const key = noteId || `${title}::${safeText(r.author?.nickname || r.author || r.user?.nickname || r.user?.nickName)}`;
+    const author = safeText(r.author?.nickname || r.author || r.user?.nickname || r.user?.nickName);
+    const key = noteId || `${title}::${author}`;
     if (seen.has(key)) continue;
     seen.add(key);
     results.push({
       noteId,
       rankingPosition,
-      sourceUrl: safeText(r.sourceUrl || r.url),
+      sourceUrl: safeHttpUrl(r.sourceUrl || r.url),
       title,
-      author: safeText(r.author?.nickname || r.author || r.user?.nickname || r.user?.nickName),
+      author,
     });
   }
   results.sort((a,b) => a.rankingPosition - b.rankingPosition);
@@ -153,7 +168,7 @@ function normalizeQuery(q={}, fallbackCapturedAt='') {
 }
 
 function deriveAuthors(rawAuthors, notes) {
-  if (Array.isArray(rawAuthors) && rawAuthors.length) return rawAuthors;
+  if (Array.isArray(rawAuthors) && rawAuthors.length) return rawAuthors.map(normalizeAuthor);
   const seen = new Set();
   const authors = [];
   for (const n of notes) {
@@ -176,31 +191,32 @@ export function normalizeHarvest(raw={}) {
     capturedAt,
     entry: normalizeEntry(input.source?.entry),
     keyword: safeText(input.source?.keyword),
-    sourceUrl: safeText(input.source?.sourceUrl || input.source?.url),
+    sourceUrl: safeHttpUrl(input.source?.sourceUrl || input.source?.url),
     captureMethod: normalizeCaptureMethod(input.source?.captureMethod),
   };
 
   const rawNotes = Array.isArray(input.notes) ? input.notes : [];
-  const notes = rawNotes.filter(n => n && typeof n === 'object').map(n => normalizeNote(n, source));
+  const normalizedNotes = rawNotes.filter(n => n && typeof n === 'object').map(n => normalizeNote(n, source));
+  const seenNotes = new Set();
+  const notes = normalizedNotes.filter(n => {
+    const key = n.noteId || `${n.author.nickname}:${n.title}:${n.sourceUrl}`;
+    if (!key) return true;
+    if (seenNotes.has(key)) return false;
+    seenNotes.add(key);
+    return true;
+  });
+
+  const noteSources = new Map(notes.map(n => [n.noteId,n.sourceUrl]));
   const nested = notes.flatMap(n => n.comments);
   const top = (Array.isArray(input.comments) ? input.comments : [])
     .filter(c => c && typeof c === 'object')
-    .map(c => normalizeComment(c, c.noteId));
+    .map(c => normalizeComment(c, c.noteId, noteSources.get(safeText(c.noteId)) || ''));
   const allComments = [...nested, ...top].filter(c => c.id || c.content);
   const seenComments = new Set();
   const comments = allComments.filter(c => {
     const key = c.id || `${c.noteId}:${c.user}:${c.content}`;
     if (seenComments.has(key)) return false;
     seenComments.add(key);
-    return true;
-  });
-
-  const seenNotes = new Set();
-  const dedupedNotes = notes.filter(n => {
-    const key = n.noteId || `${n.author.nickname}:${n.title}:${n.sourceUrl}`;
-    if (!key) return true;
-    if (seenNotes.has(key)) return false;
-    seenNotes.add(key);
     return true;
   });
 
@@ -211,18 +227,22 @@ export function normalizeHarvest(raw={}) {
 
   const gaps = Array.isArray(input.meta?.gaps) ? input.meta.gaps : [];
   const riskState = normalizeRiskState(input.meta?.riskState, loginRequired);
+  const reportedCollected = Number.isInteger(input.meta?.collected) && input.meta.collected >= 0 ? input.meta.collected : null;
+  const reportedDeduped = Number.isInteger(input.meta?.deduped) && input.meta.deduped >= 0 ? input.meta.deduped : null;
 
   return {
     schemaVersion: '2.0',
     source,
-    notes: dedupedNotes,
+    notes,
     comments,
-    authors: deriveAuthors(input.authors, dedupedNotes),
+    authors: deriveAuthors(input.authors, notes),
     queries,
     meta: {
       inputSchemaVersion,
-      collected: Number.isInteger(input.meta?.collected) ? Math.max(0, input.meta.collected) : rawNotes.length,
-      deduped: Number.isInteger(input.meta?.deduped) ? Math.max(0, input.meta.deduped) : dedupedNotes.length,
+      collected: reportedCollected ?? rawNotes.length,
+      deduped: notes.length,
+      reportedCollected,
+      reportedDeduped,
       gaps,
       loginRequired: loginRequired || riskState === 'LOGIN_REQUIRED',
       riskState,
