@@ -43,6 +43,11 @@ jobs:
           node --check products/xhs-research-studio/lib/integrity.mjs
           node --check products/xhs-research-studio/lib/evaluation.mjs
           node --check products/xhs-research-studio/lib/evidence-pack.mjs
+          node --check products/xhs-research-studio/lib/runs.mjs
+          node --check products/xhs-research-studio/lib/executor.mjs
+          node --check products/xhs-research-studio/lib/schedules.mjs
+          node --check products/xhs-research-studio/lib/run-service.mjs
+          node --check products/xhs-research-studio/lib/run-http.mjs
           node --check products/xhs-research-studio/smoke-test.mjs
       - name: Core unit, security, compatibility, and scale tests
         run: node --test products/xhs-research-studio/test/*.test.mjs
@@ -88,6 +93,8 @@ jobs:
           uid="$(docker exec "$name" id -u)"
           test "$uid" != "0"
           echo "container uid=$uid"
+          curl --fail --silent http://127.0.0.1:55419/api/run-system > /tmp/xhs-run-system.json
+          grep -q '"executorConfigured": false' /tmp/xhs-run-system.json
           curl --fail --silent \
             -H 'content-type: application/json' \
             -d '{"name":"Container Persisted Project","keywords":["防晒"]}' \
