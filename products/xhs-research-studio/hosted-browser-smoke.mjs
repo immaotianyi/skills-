@@ -55,6 +55,12 @@ try{
   await evaluate(`document.querySelector('#demoBtn').click();true`);
   await poll(()=>evaluate(`!document.querySelector('#projectView').hidden&&document.querySelectorAll('#topNotes .note').length>=3`),{attempts:280,label:'hosted demo project render',diagnostic});
   assert.match(await evaluate(`document.querySelector('#projectName').innerText`),/Demo/);
+
+  await poll(()=>evaluate(`!!document.querySelector('#hostedPortfolio')`),{label:'hosted portfolio button',diagnostic});
+  await evaluate(`document.querySelector('#hostedPortfolio').click();true`);
+  await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('Portfolio')&&document.querySelector('#hostedPanel').innerText.includes('Demo')&&document.querySelector('#hostedPanel').innerText.includes('有快照')`),{attempts:240,label:'agency portfolio panel',diagnostic});
+  assert.equal(await evaluate(`document.querySelectorAll('#portfolioRows [data-portfolio-project]').length>=1`),true);
+
   await evaluate(`document.querySelector('#hostedProjectActions').click();true`);
   await poll(()=>evaluate(`!!document.querySelector('#hostedSynthesis')&&!document.querySelector('#hostedSynthesis').disabled`),{label:'hosted project action panel',diagnostic});
   assert.equal(await evaluate(`!!document.querySelector('#hostedShare')&&!document.querySelector('#hostedShare').disabled`),true);
@@ -65,7 +71,7 @@ try{
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('pilot / active')&&!!document.querySelector('#hostedPortal')`),{label:'hosted billing controls',diagnostic});
   await sleep(150);
   assert.deepEqual(browserErrors,[],`browser errors: ${browserErrors.join(' | ')}`);
-  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
+  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
 }finally{
   try{socket?.close()}catch{}
   await terminate(chrome);await terminate(server);
