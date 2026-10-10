@@ -61,7 +61,7 @@ async function terminate(child,label) {
 }
 
 const server=spawn(process.execPath,[path.join(root,'server.mjs')],{
-  env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir},
+  env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir,XHS_STUDIO_HARVEST_EXECUTOR:''},
   stdio:['ignore','pipe','pipe'],
 });
 let chrome;
@@ -185,6 +185,17 @@ try {
   const sourceProtocolsOk=await evaluate(`Array.from(document.querySelectorAll('a[href]')).every(a=>['http:','https:'].includes(new URL(a.href).protocol))`);
   assert.equal(sourceProtocolsOk,true);
 
+  await evaluate(`document.querySelector('.tabs button[data-tab="runs"]').click(); true`);
+  const noExecutorReady=await poll(()=>evaluate(`document.querySelector('#runSystemStatus').innerText.includes('自动执行器：未配置')`),{attempts:200,delay:50,label:'run-system no-executor state',diagnostic:chromeDiagnostic});
+  assert.equal(noExecutorReady,true);
+  await evaluate(`document.querySelector('#runStartBtn').click(); true`);
+  const manualRunReady=await poll(()=>evaluate(`document.querySelector('#runList').innerText.includes('需要人工接管') && document.querySelector('#runList').innerText.includes('EXECUTOR_NOT_CONFIGURED')`),{attempts:240,delay:50,label:'manual-action run safety state',diagnostic:chromeDiagnostic});
+  assert.equal(manualRunReady,true);
+
+  await evaluate(`document.querySelector('#scheduleInterval').value='60'; document.querySelector('#scheduleCreateBtn').click(); true`);
+  const scheduleReady=await poll(()=>evaluate(`document.querySelector('#scheduleList').innerText.includes('每 60 分钟')`),{attempts:200,delay:50,label:'schedule UI render',diagnostic:chromeDiagnostic});
+  assert.equal(scheduleReady,true);
+
   await evaluate(`document.querySelector('.tabs button[data-tab="report"]').click(); true`);
   const reportReady=await poll(()=>evaluate(`document.querySelector('#reportText').textContent.includes('Methodology / interpretation limits')`),{attempts:200,delay:50,label:'client report render',diagnostic:chromeDiagnostic});
   assert.equal(reportReady,true);
@@ -197,6 +208,9 @@ try {
     templateCount,
     topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),
     clusters:await evaluate(`document.querySelectorAll('.clusterBtn').length`),
+    noExecutorReady,
+    manualRunReady,
+    scheduleReady,
     reportReady,
     browserErrors,
   },null,2));
