@@ -68,6 +68,10 @@ test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 
     const legacy=await legacyResponse.json();
     assert.equal(legacy.schemaVersion,'xhs-evidence-pack/1.1');
 
+    const forbiddenDowngrade=await fetch(`${base}/api/projects/${project.id}/evidence-pack?requireAuthenticated=1`);
+    assert.equal(forbiddenDowngrade.status,409);
+    assert.match((await forbiddenDowngrade.json()).error,/version 1\.2/i);
+
     const modernResponse=await fetch(`${base}/api/projects/${project.id}/evidence-pack?version=1.2&requireAuthenticated=1`);
     assert.equal(modernResponse.status,200);
     assert.equal(modernResponse.headers.get('x-xhs-evidence-pack-version'),'1.2');
