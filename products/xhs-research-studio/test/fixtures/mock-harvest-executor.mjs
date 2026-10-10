@@ -19,6 +19,11 @@ else if(mode==='manual'){
   const harvest=JSON.parse(await fs.readFile(file,'utf8'));
   harvest.meta={...(harvest.meta||{}),riskState:'LOGIN_REQUIRED',loginRequired:true,stoppedBecause:'Login is required.'};
   process.stdout.write(JSON.stringify({status:'completed',harvest})+'\n');
+}else if(mode==='legacy'){
+  const file=process.env.XHS_EXECUTOR_FIXTURE_PATH;
+  const harvest=JSON.parse(await fs.readFile(file,'utf8'));
+  delete harvest.schemaVersion;
+  process.stdout.write(JSON.stringify({status:'completed',harvest})+'\n');
 }else if(mode==='huge'){
   process.stdout.write(JSON.stringify({status:'completed',harvest:{padding:'x'.repeat(200_000)}}));
 }else{
