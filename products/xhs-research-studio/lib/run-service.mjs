@@ -56,6 +56,9 @@ export class RunService{
       throw new RunServiceError(409,`Run cannot be cancelled from ${current.state}.`,'RUN_NOT_CANCELLABLE');
     }
     const active=this.abortByProject.get(project.id);
+    if(active?.runId===runId&&active.committing){
+      throw new RunServiceError(409,'Run result is already being committed as a snapshot and can no longer be cancelled safely.','RUN_COMMITTING');
+    }
     if(active?.runId===runId)active.controller.abort();
     try{
       return await transitionRun(this.dataDir,project.id,runId,RUN_STATES.CANCELLED,{stoppedBecause:'Cancelled by operator.'});
@@ -67,16 +70,17 @@ export class RunService{
   async execute(project,run){
     if(this.activeByProject.has(project.id))throw new RunServiceError(409,'A Harvest run is already active for this project.','RUN_BUSY');
     const controller=new AbortController();
-    const task=this.#execute(project,run,{signal:controller.signal});
+    const active={runId:run.id,controller,committing:false};
+    this.abortByProject.set(project.id,active);
+    const task=this.#execute(project,run,{signal:controller.signal,active});
     this.activeByProject.set(project.id,task);
-    this.abortByProject.set(project.id,{runId:run.id,controller});
     try{return await task}finally{
       if(this.activeByProject.get(project.id)===task)this.activeByProject.delete(project.id);
-      if(this.abortByProject.get(project.id)?.runId===run.id)this.abortByProject.delete(project.id);
+      if(this.abortByProject.get(project.id)===active)this.abortByProject.delete(project.id);
     }
   }
 
-  async #execute(project,run,{signal}={}){
+  async #execute(project,run,{signal,active}={}){
     let current=await transitionRun(this.dataDir,project.id,run.id,RUN_STATES.RUNNING);
     if(current.scheduleId)await recordScheduleRun(this.dataDir,current.scheduleId,{runId:current.id,state:current.state});
     try{
@@ -91,6 +95,9 @@ export class RunService{
         return current;
       }
 
+      // Commit point: once set, cancellation is rejected so persisted run state cannot
+      // disagree with a snapshot that is already being written.
+      if(active)active.committing=true;
       const before=await listSnapshots(this.dataDir,project.id);
       const snapshot=await saveSnapshot(this.dataDir,project.id,result.harvest);
       await mutateProjects(this.dataDir,projects=>{
@@ -109,8 +116,6 @@ export class RunService{
           attention=[];
         }
       }
-      const latestBeforeComplete=await getRun(this.dataDir,project.id,current.id);
-      if(latestBeforeComplete?.state===RUN_STATES.CANCELLED)return latestBeforeComplete;
       current=await transitionRun(this.dataDir,project.id,current.id,RUN_STATES.COMPLETED,{
         snapshotId:snapshot.id,
         riskState:snapshot.harvest?.meta?.riskState||'NORMAL',
@@ -149,8 +154,10 @@ export class RunService{
         continue;
       }
       try{
-        const run=await this.launch(project,{budget:schedule.budget,trigger:'schedule',scheduleId:schedule.id});
-        await recordScheduleRun(this.dataDir,schedule.id,{runId:run.id,state:run.state});
+        // #execute owns schedule run-state recording. Do not write the stale queued
+        // state here after launch because a very fast executor may already be running
+        // or completed by the time launch() resolves.
+        await this.launch(project,{budget:schedule.budget,trigger:'schedule',scheduleId:schedule.id});
       }catch(error){
         await recordScheduleRun(this.dataDir,schedule.id,{state:'launch_failed',error});
       }
@@ -183,6 +190,8 @@ export class RunService{
 
   stop(){
     if(this.timer){clearInterval(this.timer);this.timer=null}
-    for(const active of this.abortByProject.values())active.controller.abort();
+    for(const active of this.abortByProject.values()){
+      if(!active.committing)active.controller.abort();
+    }
   }
 }
