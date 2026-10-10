@@ -39,6 +39,7 @@ export function requireProjectWorkspace(req,store,project,{write=false,admin=fal
   return context;
 }
 function mePayload(store,session){return {user:session.user,session:{expiresAt:session.expiresAt},workspaces:store.memberships(session.user.id).map(workspace=>({...workspace,entitlement:store.getEntitlement(workspace.id),usage:store.usage(workspace.id)}))}}
+function optionalSessionPayload(req,store){const token=sessionToken(req);if(!token)return null;const session=store.resolveSession(token);return session?mePayload(store,session):null}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/gu,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function sharedHtml(shared){const title=escapeHtml(shared.project?.name||'Shared Research Report'),markdown=escapeHtml(shared.markdown||'No report is available.');return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font:16px/1.6 system-ui;margin:0;background:#f6f6f4;color:#171717}main{max-width:960px;margin:auto;padding:40px 24px}article{background:white;border:1px solid #ddd;border-radius:14px;padding:28px}pre{white-space:pre-wrap;word-break:break-word;font:inherit}</style></head><body><main><article><pre>${markdown}</pre></article></main></body></html>`}
 
@@ -53,7 +54,7 @@ export async function handlePublicShare({req,res,url,store,send,loadSharedReport
 
 export async function handleHostedApi({req,res,url,store,readJson,readRaw,send,getProject,getProjects,env=process.env}){
   const parts=url.pathname.split('/').filter(Boolean);
-  if(url.pathname==='/api/hosted/status'&&req.method==='GET')return send(res,200,{hosted:true,billing:{provider:'stripe',plans:publicBillingPlans(env),configured:Boolean(env.XHS_STUDIO_STRIPE_SECRET_KEY&&env.XHS_STUDIO_STRIPE_WEBHOOK_SECRET)}});
+  if(url.pathname==='/api/hosted/status'&&req.method==='GET')return send(res,200,{hosted:true,session:optionalSessionPayload(req,store),billing:{provider:'stripe',plans:publicBillingPlans(env),configured:Boolean(env.XHS_STUDIO_STRIPE_SECRET_KEY&&env.XHS_STUDIO_STRIPE_WEBHOOK_SECRET)}});
   if(url.pathname==='/api/auth/register'&&req.method==='POST'){
     assertSameOrigin(req,env);const body=await readJson(req),created=store.register({email:body.email,password:body.password,workspaceName:body.workspaceName}),session=store.createSession(created.user.id);
     return send(res,201,{...created,...mePayload(store,{user:created.user,expiresAt:session.expiresAt})},'application/json; charset=utf-8',{'set-cookie':sessionCookie(req,session.token,session.expiresAt,env)});
