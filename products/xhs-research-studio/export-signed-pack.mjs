@@ -18,7 +18,15 @@ async function get(url){
 }
 
 function usage(){
-  process.stdout.write('Usage: node export-signed-pack.mjs PROJECT_ID [--snapshot SNAPSHOT_ID] [--out evidence-pack.json] [--base http://127.0.0.1:5418]\n');
+  process.stdout.write('Usage: XHS_STUDIO_PACK_INTEGRITY_KEY=<32+ byte secret> node export-signed-pack.mjs PROJECT_ID [--snapshot SNAPSHOT_ID] [--out evidence-pack.json] [--base http://127.0.0.1:5418]\n');
+  process.stdout.write('The source Studio must also use XHS_STUDIO_INTEGRITY_KEY so the selected snapshot is authenticated, not checksum-only.\n');
+}
+
+function packIntegrityOptions(){
+  const key=String(process.env.XHS_STUDIO_PACK_INTEGRITY_KEY||'');
+  if(!key) throw new Error('XHS_STUDIO_PACK_INTEGRITY_KEY is required for a signed Evidence Pack');
+  if(Buffer.byteLength(key,'utf8')<32) throw new Error('XHS_STUDIO_PACK_INTEGRITY_KEY must be at least 32 UTF-8 bytes');
+  return {key,keyId:String(process.env.XHS_STUDIO_PACK_INTEGRITY_KEY_ID||'pack-v1')};
 }
 
 try{
@@ -28,11 +36,13 @@ try{
   const snapshotId=requestedSnapshot||snapshots.at(-1)?.id;
   if(!snapshotId) throw new Error('project has no snapshots');
   const snapshot=await get(`/api/projects/${encodeURIComponent(projectId)}/snapshots/${encodeURIComponent(snapshotId)}`);
-  if(!snapshot.integrity) throw new Error('snapshot is unsigned; create a new signed snapshot before exporting a signed pack');
+  if(!snapshot.integrity) throw new Error('snapshot is unsigned; create a new authenticated snapshot before exporting a signed pack');
   if(snapshot.integrityStatus?.verified!==true) throw new Error('snapshot integrity is not verified');
-  const pack=buildEvidencePack(projectState.project,snapshot);
-  const verification=verifyEvidencePack(pack);
-  if(!verification.ok) throw new Error(`generated pack failed self-verification: ${JSON.stringify(verification.errors)}`);
+  if(snapshot.integrityStatus?.authenticated!==true) throw new Error('snapshot is checksum-only; configure XHS_STUDIO_INTEGRITY_KEY and ingest a new snapshot before signed export');
+  const options=packIntegrityOptions();
+  const pack=buildEvidencePack(projectState.project,snapshot,options);
+  const verification=verifyEvidencePack(pack,options);
+  if(!verification.ok||!verification.authenticated) throw new Error(`generated pack failed authenticated self-verification: ${JSON.stringify(verification.errors)}`);
   const text=JSON.stringify(pack,null,2)+'\n';
   if(outFile){
     await fs.mkdir(path.dirname(path.resolve(outFile)),{recursive:true});
