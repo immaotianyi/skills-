@@ -16,7 +16,7 @@
 
   function previewHtml(branding={}){
     const accent=safeAccent(branding.accentColor);
-    return `<div id="brandingPreview" class="card" style="border-top:4px solid ${accent}"><span class="eyebrow">${esc(branding.agencyName||'AGENCY')}</span><h4 style="color:${accent}">${esc(branding.reportTitle||'Client Research Report')}</h4><p>示例客户项目 · 证据与方法边界保持不变</p>${branding.footerText?`<small>${esc(branding.footerText)}</small>`:''}</div>`;
+    return `<div id="brandingPreview" class="card"><span class="eyebrow">${esc(branding.agencyName||'AGENCY')}</span><h4>${esc(branding.reportTitle||'Client Research Report')}</h4><p>示例客户项目 · 证据与方法边界保持不变</p><p><small>强调色：${esc(accent)}</small></p>${branding.footerText?`<small>${esc(branding.footerText)}</small>`:''}</div>`;
   }
 
   async function renderBranding(){
@@ -27,7 +27,7 @@
     try{
       const [me,result]=await Promise.all([request('/api/me'),request(`/api/workspaces/${encodeURIComponent(id)}/branding`)]);
       const role=roleOf(me,id),canManage=['owner','admin'].includes(role),branding=result.branding||{};
-      panel.innerHTML=`<div class="row"><div><span class="eyebrow">WHITE LABEL</span><h3>客户报告品牌</h3></div><button id="brandingClose" class="link">关闭</button></div><p>品牌只影响客户报告外观；不会隐藏来源、证据质量、方法限制或访问安全边界。远程 logo / 自定义 HTML / CSS 在当前 beta 中禁用。</p>${previewHtml(branding)}${canManage?`<form id="brandingForm"><label>机构 / Agency 名称</label><input name="agencyName" maxlength="120" value="${esc(branding.agencyName||'')}"><label>报告标题</label><input name="reportTitle" maxlength="160" value="${esc(branding.reportTitle||'')}"><label>强调色（#RRGGBB）</label><input name="accentColor" maxlength="7" pattern="#[0-9A-Fa-f]{6}" value="${esc(safeAccent(branding.accentColor))}"><label>页脚</label><input name="footerText" maxlength="300" value="${esc(branding.footerText||'')}"><button>保存品牌设置</button><div id="brandingStatus"></div></form>`:`<p><small>当前角色 ${esc(role||'unknown')}：可查看品牌设置，只有 owner/admin 可以修改。</small></p>`}`;
+      panel.innerHTML=`<div class="row"><div><span class="eyebrow">WHITE LABEL</span><h3>客户报告品牌</h3></div><button id="brandingClose" class="link">关闭</button></div><p>品牌只影响客户报告外观；不会隐藏来源、证据质量、方法限制或访问安全边界。远程 logo / 自定义 HTML / CSS 在当前 beta 中禁用。编辑器保持主应用严格 CSP，因此强调色在公开客户报告中实际渲染。</p>${previewHtml(branding)}${canManage?`<form id="brandingForm"><label>机构 / Agency 名称</label><input name="agencyName" maxlength="120" value="${esc(branding.agencyName||'')}"><label>报告标题</label><input name="reportTitle" maxlength="160" value="${esc(branding.reportTitle||'')}"><label>强调色（#RRGGBB）</label><input name="accentColor" maxlength="7" pattern="#[0-9A-Fa-f]{6}" value="${esc(safeAccent(branding.accentColor))}"><label>页脚</label><input name="footerText" maxlength="300" value="${esc(branding.footerText||'')}"><button>保存品牌设置</button><div id="brandingStatus"></div></form>`:`<p><small>当前角色 ${esc(role||'unknown')}：可查看品牌设置，只有 owner/admin 可以修改。</small></p>`}`;
       panel.querySelector('#brandingClose').onclick=()=>{panel.hidden=true};
       const form=panel.querySelector('#brandingForm');
       if(form)form.onsubmit=async event=>{
