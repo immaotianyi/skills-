@@ -40,11 +40,11 @@ jobs:
     steps:
       # ── 1. Checkout ─────────────────────────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ── 2. Setup Node.js ────────────────────────────────────────────────
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           # Cache ~/.npm keyed on package-lock.json — restores in <10s on
