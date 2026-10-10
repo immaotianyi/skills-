@@ -6,12 +6,12 @@ import path from 'node:path';
 import { makeIntegrity, verifyIntegrity, IntegrityError } from '../lib/integrity.mjs';
 import { evaluateSignalClassifier, auditEvaluationDataset } from '../lib/evaluation.mjs';
 import { buildEvidencePack, verifyEvidencePack } from '../lib/evidence-pack.mjs';
-import { ensureData, saveSnapshot, loadSnapshot } from '../lib/storage.mjs';
+import { ensureData, saveSnapshot, loadSnapshot, listSnapshots } from '../lib/storage.mjs';
 
-function harvest(){
+function harvest(capturedAt='2026-10-10T00:00:00Z'){
   return {
     schemaVersion:'2.0',
-    source:{platform:'xiaohongshu',capturedAt:'2026-10-10T00:00:00Z',entry:'search',captureMethod:'initial_state'},
+    source:{platform:'xiaohongshu',capturedAt,entry:'search',captureMethod:'initial_state'},
     notes:[{noteId:'n1',title:'证据标题',desc:'',author:{userId:'u1',nickname:'作者'},stats:{likes:10,collects:2,comments:1,shares:0},tags:[],sourceUrl:'https://www.xiaohongshu.com/explore/n1',captureMethod:'initial_state',confidence:1,comments:[]}],
     comments:[],authors:[],queries:[],
     meta:{gaps:[],loginRequired:false,riskState:'NORMAL',stoppedBecause:'sample complete'},
@@ -45,33 +45,92 @@ test('HMAC integrity authenticates with the external key and fails with missing 
   assert.equal(verifyIntegrity(value,integrity,'hmac-test',{key:'wrong-key-value-long-enough-for-this-unit-case',keyId:'unit-v1'}).ok,false);
 });
 
-test('checksum snapshots detect content mutation while legacy unsigned snapshots stay explicit',async()=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-'));
+test('v2 snapshot integrity protects raw evidence, derived analysis, validation and metadata',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-v2-'));
   try{
     await ensureData(dir);
     const snapshot=await saveSnapshot(dir,'prj_test',harvest());
+    assert.equal(snapshot.integrity.scope,'xhs-research-studio-snapshot-record-v2');
     assert.equal(snapshot.integrity.algorithm,'sha256');
-    assert.equal(snapshot.integrity.authenticated,false);
     assert.equal(snapshot.integrityStatus.verified,true);
-    assert.equal(snapshot.integrityStatus.authenticated,false);
+    assert.equal(snapshot.integrityStatus.recordProtected,true);
     assert.equal(snapshot.integrityStatus.checksumOnly,true);
-    assert.equal(snapshot.integrityStatus.unsigned,false);
     assert.ok(Array.isArray(snapshot.validation.inputWarnings));
 
     const file=path.join(dir,'snapshots','prj_test',`${snapshot.id}.json`);
-    const stored=JSON.parse(await fs.readFile(file,'utf8'));
-    assert.ok(Array.isArray(stored.validation.inputWarnings));
-    stored.harvest.notes[0].title='被修改';
-    await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
+    const original=JSON.parse(await fs.readFile(file,'utf8'));
+
+    const evidenceTamper=structuredClone(original);
+    evidenceTamper.harvest.notes[0].title='被修改的原始证据';
+    await fs.writeFile(file,JSON.stringify(evidenceTamper,null,2),'utf8');
     await assert.rejects(()=>loadSnapshot(dir,'prj_test',snapshot.id),IntegrityError);
 
-    stored.harvest.notes[0].title='证据标题';
+    const analysisTamper=structuredClone(original);
+    analysisTamper.analysis.coverage.notes=999999;
+    await fs.writeFile(file,JSON.stringify(analysisTamper,null,2),'utf8');
+    await assert.rejects(()=>loadSnapshot(dir,'prj_test',snapshot.id),IntegrityError);
+
+    const validationTamper=structuredClone(original);
+    validationTamper.validation.inputWarnings.push({path:'fake',message:'injected'});
+    await fs.writeFile(file,JSON.stringify(validationTamper,null,2),'utf8');
+    await assert.rejects(()=>loadSnapshot(dir,'prj_test',snapshot.id),IntegrityError);
+
+    const metadataTamper=structuredClone(original);
+    metadataTamper.createdAt='2030-01-01T00:00:00Z';
+    await fs.writeFile(file,JSON.stringify(metadataTamper,null,2),'utf8');
+    await assert.rejects(()=>loadSnapshot(dir,'prj_test',snapshot.id),IntegrityError);
+  } finally {
+    await fs.rm(dir,{recursive:true,force:true});
+  }
+});
+
+test('legacy v1 and unsigned snapshots never trust stored derived analysis',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-legacy-'));
+  try{
+    const snapshot=await saveSnapshot(dir,'prj_legacy',harvest());
+    const file=path.join(dir,'snapshots','prj_legacy',`${snapshot.id}.json`);
+    const stored=JSON.parse(await fs.readFile(file,'utf8'));
+
+    stored.analysis.coverage.notes=777777;
+    stored.integrity=makeIntegrity(stored.harvest,'xhs-harvest-snapshot-evidence-v1');
+    await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
+    const legacyV1=await loadSnapshot(dir,'prj_legacy',snapshot.id);
+    assert.equal(legacyV1.integrityStatus.verified,true);
+    assert.equal(legacyV1.integrityStatus.recordProtected,false);
+    assert.equal(legacyV1.analysis.coverage.notes,1);
+    assert.equal(legacyV1.migration.analysisRecomputedInMemory,true);
+    assert.equal(legacyV1.migration.reason,'derived-analysis-not-covered-by-record-integrity');
+
+    stored.analysis.coverage.notes=888888;
     delete stored.integrity;
     await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
-    const legacy=await loadSnapshot(dir,'prj_test',snapshot.id);
-    assert.equal(legacy.integrityStatus.verified,false);
-    assert.equal(legacy.integrityStatus.unsigned,true);
-    assert.equal(legacy.integrityStatus.authenticated,false);
+    const unsigned=await loadSnapshot(dir,'prj_legacy',snapshot.id);
+    assert.equal(unsigned.integrityStatus.verified,false);
+    assert.equal(unsigned.integrityStatus.unsigned,true);
+    assert.equal(unsigned.integrityStatus.recordProtected,false);
+    assert.equal(unsigned.analysis.coverage.notes,1);
+  } finally {
+    await fs.rm(dir,{recursive:true,force:true});
+  }
+});
+
+test('tampered latest snapshot keeps its capture time in listings so default-latest consumers cannot silently fall back',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-integrity-list-'));
+  try{
+    const earlier=await saveSnapshot(dir,'prj_list',harvest('2026-10-10T00:00:00Z'));
+    const later=await saveSnapshot(dir,'prj_list',harvest('2026-10-11T00:00:00Z'));
+    const file=path.join(dir,'snapshots','prj_list',`${later.id}.json`);
+    const stored=JSON.parse(await fs.readFile(file,'utf8'));
+    stored.analysis.coverage.notes=123456;
+    await fs.writeFile(file,JSON.stringify(stored,null,2),'utf8');
+
+    const listing=await listSnapshots(dir,'prj_list');
+    assert.equal(listing.length,2);
+    assert.equal(listing[0].id,earlier.id);
+    assert.equal(listing[1].id,later.id);
+    assert.equal(listing[1].createdAt,'2026-10-11T00:00:00Z');
+    assert.equal(listing[1].integrityStatus.verified,false);
+    await assert.rejects(()=>loadSnapshot(dir,'prj_list',listing.at(-1).id),IntegrityError);
   } finally {
     await fs.rm(dir,{recursive:true,force:true});
   }
