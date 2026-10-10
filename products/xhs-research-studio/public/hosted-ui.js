@@ -71,6 +71,7 @@
   function activeWorkspace(){return (me?.workspaces||[]).find(w=>w.id===workspaceId)||null}
   function roleCanManage(){return ['owner','admin'].includes(activeWorkspace()?.role)}
   function roleCanWrite(){return ['owner','admin','analyst'].includes(activeWorkspace()?.role)}
+  function managedSubscription(ent={}){return Boolean(ent.providerSubscriptionId&&!['canceled','incomplete_expired'].includes(String(ent.status||'')))}
   async function refreshMe(){me=(await raw('/api/me')).body;selectWorkspace();renderHostedBar();return me}
 
   function ensureShell(){
@@ -93,14 +94,22 @@
   async function invite(){const email=document.getElementById('hostedInviteEmail')?.value,role=document.getElementById('hostedInviteRole')?.value;const result=(await post(`/api/workspaces/${workspaceId}/invitations`,{email,role})).body;await navigator.clipboard.writeText(result.invitation.url);toast('邀请链接已复制');await renderPanel()}
 
   async function renderPanel(){
-    const panel=document.getElementById('hostedPanel');if(!panel)return;const ws=activeWorkspace(),ent=ws?.entitlement||{},plans=status?.billing?.plans||[],configuredPlans=plans.filter(p=>p.configured);
-    panel.innerHTML=`<div class="row"><h3>Workspace</h3><button id="hostedClose" class="link">关闭</button></div><p><b>${esc(ws?.name||'')}</b> · ${esc(ws?.role||'')}</p><p>套餐：${esc(ent.plan||'unpaid')} / ${esc(ent.status||'inactive')}<br>项目上限 ${Number(ent.maxProjects||0)} · 月运行 ${Number(ws?.usage?.runs||0)}/${Number(ent.maxRunsMonth||0)}</p><div class="hostedRow"><select id="hostedPlanSelect">${configuredPlans.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} · ${p.maxProjects} projects / ${p.maxRunsMonth} runs</option>`).join('')}</select><button id="hostedCheckout" ${configuredPlans.length?'':'disabled'}>订阅 / 更换套餐</button>${ent.providerCustomerId?'<button id="hostedPortal" class="secondary">发票 / 取消订阅</button>':''}</div>${!configuredPlans.length?'<p><small>当前部署尚未配置可购买的 Stripe Price。</small></p>':''}${roleCanManage()?`<hr><h4>邀请成员</h4><div class="hostedRow"><input id="hostedInviteEmail" type="email" placeholder="成员邮箱"><select id="hostedInviteRole"><option value="analyst">analyst</option><option value="viewer">viewer</option><option value="admin">admin</option></select><button id="hostedInvite">创建邀请</button></div><div id="hostedMembers">加载成员…</div>`:''}`;
+    const panel=document.getElementById('hostedPanel');if(!panel)return;
+    const ws=activeWorkspace(),ent=ws?.entitlement||{},plans=status?.billing?.plans||[],configuredPlans=plans.filter(p=>p.configured),hasManagedSubscription=managedSubscription(ent);
+    const checkoutControls=hasManagedSubscription
+      ? ''
+      : `<select id="hostedPlanSelect">${configuredPlans.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} · ${p.maxProjects} projects / ${p.maxRunsMonth} runs</option>`).join('')}</select><button id="hostedCheckout" ${configuredPlans.length?'':'disabled'}>${ent.providerCustomerId?'重新订阅':'开始订阅'}</button>`;
+    const portalControl=ent.providerCustomerId?`<button id="hostedPortal" class="secondary">${hasManagedSubscription?'套餐 / 发票 / 取消订阅':'账单历史'}</button>`:'';
+    const billingHint=hasManagedSubscription
+      ? '<p><small>当前已有 Stripe 订阅。套餐变更、付款方式、发票和取消统一通过 Billing Portal 管理，避免重复订阅。</small></p>'
+      : (!configuredPlans.length?'<p><small>当前部署尚未配置可购买的 Stripe Price。</small></p>':'');
+    panel.innerHTML=`<div class="row"><h3>Workspace</h3><button id="hostedClose" class="link">关闭</button></div><p><b>${esc(ws?.name||'')}</b> · ${esc(ws?.role||'')}</p><p>套餐：${esc(ent.plan||'unpaid')} / ${esc(ent.status||'inactive')}<br>项目上限 ${Number(ent.maxProjects||0)} · 月运行 ${Number(ws?.usage?.runs||0)}/${Number(ent.maxRunsMonth||0)}</p><div class="hostedRow">${checkoutControls}${portalControl}</div>${billingHint}${roleCanManage()?`<hr><h4>邀请成员</h4><div class="hostedRow"><input id="hostedInviteEmail" type="email" placeholder="成员邮箱"><select id="hostedInviteRole"><option value="analyst">analyst</option><option value="viewer">viewer</option><option value="admin">admin</option></select><button id="hostedInvite">创建邀请</button></div><div id="hostedMembers">加载成员…</div>`:''}`;
     panel.hidden=false;document.getElementById('hostedClose').onclick=()=>{panel.hidden=true};
     const checkout=document.getElementById('hostedCheckout');if(checkout)checkout.onclick=()=>billingCheckout().catch(err=>toast(err.message));
     const portal=document.getElementById('hostedPortal');if(portal)portal.onclick=()=>billingPortal().catch(err=>toast(err.message));
     const inviteBtn=document.getElementById('hostedInvite');if(inviteBtn)inviteBtn.onclick=()=>invite().catch(err=>toast(err.message));
     if(roleCanManage()){
-      try{const {body}=await raw(`/api/workspaces/${workspaceId}/members`);const node=document.getElementById('hostedMembers');if(node)node.innerHTML=`<h4>成员</h4>${body.members.map(m=>`<div>${esc(m.email)} · ${esc(m.role)}</div>`).join('')}`}catch(err){toast(err.message)}
+      try{const {body}=await raw(`/api/workspaces/${workspaceId}/members`);const node=document.getElementById('hostedMembers');if(node)node.innerHTML=`<h4>成员</h4>${body.members.map(m=>`<div>${esc(m.email)} · ${esc(m.role)}</div>`).join('')} `}catch(err){toast(err.message)}
     }
   }
 
