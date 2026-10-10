@@ -3,6 +3,7 @@ import { HostedStoreError } from './hosted-db.mjs';
 
 const ACTIVE_STRIPE_STATUSES=new Set(['active','trialing']);
 const TERMINAL_SUBSCRIPTION_STATUSES=new Set(['canceled','incomplete_expired']);
+const CLOCK_PREFIX='stripe_entitlement_clock:';
 
 export class BillingError extends Error{
   constructor(message,{code='BILLING_ERROR',statusCode=400}={}){super(message);this.code=code;this.statusCode=statusCode}
@@ -51,8 +52,7 @@ async function stripeFormRequest(endpoint,form,{fetchImpl=fetch,env=process.env,
     headers:{authorization:`Bearer ${stripeSecret(env)}`,'content-type':'application/x-www-form-urlencoded'},
     body:form.toString(),
   });
-  const text=await response.text();
-  let data;
+  const text=await response.text();let data;
   try{data=JSON.parse(text)}catch{data={}}
   if(!response.ok){
     const detail=data?.error?.message||`Stripe returned HTTP ${response.status}`;
@@ -122,20 +122,64 @@ function entitlementFromPlan(plan,status,object={}){
   };
 }
 
-function eventWorkspacePlan(event,env){
-  const object=event.data.object||{},metadata=object.metadata||{},workspaceId=String(metadata.workspace_id||object.client_reference_id||'').trim();
+function existingEntitlementRow(db,object={}){
+  const subscriptionId=String(object.object)==='subscription'?String(object.id||'').trim():String(object.subscription||'').trim();
+  if(subscriptionId){
+    const bySubscription=db.prepare('SELECT * FROM entitlements WHERE provider_subscription_id=?').get(subscriptionId);
+    if(bySubscription)return bySubscription;
+  }
+  const customerId=String(object.customer||'').trim();
+  if(customerId)return db.prepare('SELECT * FROM entitlements WHERE provider_customer_id=?').get(customerId)||null;
+  return null;
+}
+
+function eventResolution(store,event,env){
+  const object=event.data.object||{},metadata=object.metadata||{},existing=existingEntitlementRow(store.db,object);
+  const workspaceId=String(metadata.workspace_id||object.client_reference_id||existing?.workspace_id||'').trim();
   if(!workspaceId)return null;
   if(String(object.object)==='subscription'&&event.type!=='customer.subscription.deleted'){
     const items=Array.isArray(object.items?.data)?object.items.data:[];
     if(items.length!==1)throw new BillingError('Hosted billing expects exactly one recurring subscription item.',{code:'STRIPE_SUBSCRIPTION_ITEMS_UNSUPPORTED',statusCode:503});
-    const priceId=String(items[0]?.price?.id||items[0]?.plan?.id||'').trim();
-    const plan=findPlanByPrice(priceId,env);
+    const priceId=String(items[0]?.price?.id||items[0]?.plan?.id||'').trim(),plan=findPlanByPrice(priceId,env);
     if(!plan)throw new BillingError(`Stripe subscription uses an unconfigured Price: ${priceId||'(missing)'}.`,{code:'STRIPE_PRICE_NOT_CONFIGURED',statusCode:503});
-    return {workspaceId,plan,object};
+    return {workspaceId,plan,object,existing};
+  }
+  if(event.type==='customer.subscription.deleted'){
+    const metadataPlan=String(metadata.plan||'').trim();
+    const plan=metadataPlan?findPlan(metadataPlan,env):null;
+    return {workspaceId,plan,object,existing};
   }
   const planId=String(metadata.plan||'').trim();
-  if(!planId)return null;
-  return {workspaceId,plan:findPlan(planId,env),object};
+  if(!planId)return {workspaceId,plan:null,object,existing};
+  return {workspaceId,plan:findPlan(planId,env),object,existing};
+}
+
+function eventStatus(event){
+  const object=event.data.object||{};
+  if(event.type==='checkout.session.completed')return object.mode==='subscription'&&['paid','no_payment_required'].includes(String(object.payment_status))?'active':null;
+  if(event.type==='customer.subscription.created'||event.type==='customer.subscription.updated')return String(object.status||'inactive');
+  if(event.type==='customer.subscription.deleted')return 'canceled';
+  return null;
+}
+function eventSubscriptionId(object={}){return String(object.object)==='subscription'?String(object.id||'').trim():String(object.subscription||'').trim()}
+function eventCreated(event){const value=Math.trunc(Number(event?.created));return Number.isFinite(value)&&value>0?value:0}
+function clockKey(workspaceId){return `${CLOCK_PREFIX}${workspaceId}`}
+function readClock(db,workspaceId){
+  const row=db.prepare('SELECT value FROM hosted_meta WHERE key=?').get(clockKey(workspaceId));
+  if(!row?.value)return null;
+  try{return JSON.parse(row.value)}catch{return null}
+}
+function writeClock(db,workspaceId,value){
+  db.prepare('INSERT INTO hosted_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(clockKey(workspaceId),JSON.stringify(value));
+}
+function isStaleEntitlementEvent(clock,{created,subscriptionId,status}){
+  if(!clock)return false;
+  if(created&&Number(clock.created||0)>created)return true;
+  if(subscriptionId&&clock.subscriptionId===subscriptionId&&clock.status==='canceled'&&status!=='canceled')return true;
+  return false;
+}
+function recordBillingEvent(db,event,payloadHash){
+  db.prepare('INSERT INTO billing_events(provider_event_id,type,payload_hash,processed_at) VALUES(?,?,?,?)').run(event.id,event.type,payloadHash,new Date().toISOString());
 }
 
 export function applyStripeEvent(store,event,{rawBody='',env=process.env}={}){
@@ -143,21 +187,37 @@ export function applyStripeEvent(store,event,{rawBody='',env=process.env}={}){
   const payloadHash=crypto.createHash('sha256').update(Buffer.isBuffer(rawBody)?rawBody:Buffer.from(String(rawBody||JSON.stringify(event)))).digest('hex'),db=store.db;
   db.exec('BEGIN IMMEDIATE');
   try{
-    if(db.prepare('SELECT 1 AS seen FROM billing_events WHERE provider_event_id=?').get(event.id)){db.exec('COMMIT');return {applied:false,duplicate:true,entitlement:null}}
-    const resolved=eventWorkspacePlan(event,env);let entitlement=null;const object=event.data.object||{};
-    if(resolved){
-      let status=null;
-      if(event.type==='checkout.session.completed'){
-        if(object.mode==='subscription'&&['paid','no_payment_required'].includes(String(object.payment_status)))status='active';
-      }else if(event.type==='customer.subscription.created'||event.type==='customer.subscription.updated')status=String(object.status||'inactive');
-      else if(event.type==='customer.subscription.deleted')status='canceled';
-      if(status){
-        entitlement=store.setEntitlement(resolved.workspaceId,entitlementFromPlan(resolved.plan,status,object));
-        store.audit({workspaceId:resolved.workspaceId,action:'billing.entitlement.sync',targetType:'subscription',targetId:entitlement.providerSubscriptionId,metadata:{provider:'stripe',eventId:event.id,eventType:event.type,plan:entitlement.plan,status:entitlement.status}});
+    const seen=db.prepare('SELECT payload_hash FROM billing_events WHERE provider_event_id=?').get(event.id);
+    if(seen){
+      if(seen.payload_hash!==payloadHash)throw new BillingError('Stripe event ID was reused with a different payload.',{code:'STRIPE_EVENT_ID_CONFLICT',statusCode:409});
+      db.exec('COMMIT');return {applied:false,duplicate:true,stale:false,entitlement:null};
+    }
+
+    const resolved=eventResolution(store,event,env);let entitlement=null,stale=false;
+    const status=eventStatus(event),object=event.data.object||{};
+    if(resolved&&status){
+      const created=eventCreated(event),subscriptionId=eventSubscriptionId(object),clock=readClock(db,resolved.workspaceId);
+      stale=isStaleEntitlementEvent(clock,{created,subscriptionId,status});
+      if(!stale){
+        if(event.type==='customer.subscription.deleted'){
+          const patch={status:'canceled',providerCustomerId:typeof object.customer==='string'?object.customer:null,providerSubscriptionId:subscriptionId||null};
+          if(resolved.plan){
+            Object.assign(patch,entitlementFromPlan(resolved.plan,'canceled',object));
+          }
+          entitlement=store.setEntitlement(resolved.workspaceId,patch);
+        }else{
+          if(!resolved.plan)throw new BillingError('Stripe billing event does not identify a configured plan.',{code:'STRIPE_PLAN_REQUIRED',statusCode:503});
+          entitlement=store.setEntitlement(resolved.workspaceId,entitlementFromPlan(resolved.plan,status,object));
+        }
+        const nextClock={created,eventId:event.id,eventType:event.type,subscriptionId:subscriptionId||entitlement?.providerSubscriptionId||null,status:entitlement?.status||status};
+        writeClock(db,resolved.workspaceId,nextClock);
+        store.audit({workspaceId:resolved.workspaceId,action:'billing.entitlement.sync',targetType:'subscription',targetId:entitlement?.providerSubscriptionId||subscriptionId||null,metadata:{provider:'stripe',eventId:event.id,eventType:event.type,plan:entitlement?.plan||null,status:entitlement?.status||status,created}});
+      }else{
+        store.audit({workspaceId:resolved.workspaceId,action:'billing.event.stale_ignored',targetType:'subscription',targetId:subscriptionId||null,metadata:{provider:'stripe',eventId:event.id,eventType:event.type,status,created,clock}});
       }
     }
-    db.prepare('INSERT INTO billing_events(provider_event_id,type,payload_hash,processed_at) VALUES(?,?,?,?)').run(event.id,event.type,payloadHash,new Date().toISOString());
-    db.exec('COMMIT');return {applied:true,duplicate:false,entitlement};
+    recordBillingEvent(db,event,payloadHash);
+    db.exec('COMMIT');return {applied:!stale,duplicate:false,stale,entitlement};
   }catch(error){try{db.exec('ROLLBACK')}catch{}throw error}
 }
 
