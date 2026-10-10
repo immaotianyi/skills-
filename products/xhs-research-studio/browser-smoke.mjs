@@ -43,17 +43,21 @@ async function poll(fn,{attempts=100,delay=50,label='condition',diagnostic=()=>'
   throw new Error(`Timed out waiting for ${label}${last instanceof Error?`: ${last.message}`:''}${extra?`\n${extra}`:''}`);
 }
 
+function hasExited(child) {
+  return !child || child.exitCode!==null || child.signalCode!==null;
+}
+
 async function terminate(child,label) {
-  if(!child || child.exitCode!==null || child.killed) return;
+  if(hasExited(child)) return;
   const exited=new Promise(resolve=>child.once('exit',resolve));
   child.kill('SIGTERM');
   await Promise.race([exited,sleep(2000)]);
-  if(child.exitCode===null) {
+  if(!hasExited(child)) {
     const forcedExit=new Promise(resolve=>child.once('exit',resolve));
     child.kill('SIGKILL');
     await Promise.race([forcedExit,sleep(2000)]);
   }
-  if(child.exitCode===null) console.warn(`${label} did not report exit before cleanup`);
+  if(!hasExited(child)) console.warn(`${label} did not report exit before cleanup`);
 }
 
 const server=spawn(process.execPath,[path.join(root,'server.mjs')],{
