@@ -11,6 +11,7 @@ on:
     paths:
       - 'products/xhs-research-studio/**'
       - '.skills/03-domains/xiaohongshu-harvest.yaml'
+      - '.github/workflows/xhs-research-studio-smoke.yml'
 
 permissions:
   contents: read
