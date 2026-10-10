@@ -31,6 +31,8 @@ jobs:
           node --check products/xhs-research-studio/server.mjs
           node --check products/xhs-research-studio/server-v2.mjs
           node --check products/xhs-research-studio/server-v3.mjs
+          node --check products/xhs-research-studio/harvest-agent-adapter.mjs
+          node --check products/xhs-research-studio/test/fixtures/mock-harvest-agent-gateway.mjs
           node --check products/xhs-research-studio/public/app.js
           node --check products/xhs-research-studio/public/runs-ui.js
           node --check products/xhs-research-studio/public/pack-v12.js
@@ -79,7 +81,7 @@ jobs:
         run: node products/xhs-research-studio/client-delivery-browser-smoke.mjs
       - name: Build hardened container
         run: docker build -t xhs-research-studio:test products/xhs-research-studio
-      - name: Container non-root, persistence, restart, and executor gate
+      - name: Container non-root, persistence, restart, and authorized-agent executor gate
         shell: bash
         run: |
           set -euo pipefail
@@ -95,19 +97,20 @@ jobs:
           start_container() {
             mode="${1:-manual}"
             extra=()
+            command=()
             docker rm -f "$name" >/dev/null 2>&1 || true
             if [ "$mode" = "executor" ]; then
               extra+=(
                 -e XHS_STUDIO_HARVEST_EXECUTOR=node
-                -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["test/fixtures/mock-harvest-executor.mjs"]'
-                -e XHS_EXECUTOR_FIXTURE_PATH=/app/public/demo-harvest.json
-                -e XHS_EXECUTOR_MODE=success
+                -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["harvest-agent-adapter.mjs"]'
+                -e XHS_EXECUTOR_AGENT_GATEWAY=http://127.0.0.1:55421/jobs
               )
+              command=(sh -c 'node test/fixtures/mock-harvest-agent-gateway.mjs & exec node server.mjs')
             fi
             docker run -d --rm --name "$name" \
               --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
               -v "$volume":/data -p 127.0.0.1:55419:5418 \
-              "${extra[@]}" xhs-research-studio:test >/dev/null
+              "${extra[@]}" xhs-research-studio:test "${command[@]}" >/dev/null
           }
           wait_health() {
             for i in {1..40}; do
@@ -149,7 +152,7 @@ jobs:
           grep -q '"executorConfigured": true' /tmp/xhs-run-system-executor.json
           curl --fail --silent \
             -H 'content-type: application/json' \
-            -d '{"name":"Container Executor Project","keywords":["防晒"]}' \
+            -d '{"name":"Container Agent Bridge Project","keywords":["防晒"],"competitors":["A品牌"]}' \
             http://127.0.0.1:55419/api/projects > /tmp/xhs-executor-project.json
           project_id="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync('/tmp/xhs-executor-project.json','utf8')).id)")"
           curl --fail --silent \
@@ -165,7 +168,8 @@ jobs:
             fi
             if grep -q '"state": "failed"' /tmp/xhs-executor-runs.json; then
               cat /tmp/xhs-executor-runs.json
-              echo 'configured container executor run failed' >&2
+              docker logs "$name" || true
+              echo 'container authorized-agent executor run failed' >&2
               exit 1
             fi
             sleep 0.1
@@ -173,8 +177,8 @@ jobs:
           test "$completed" = "1"
           curl --fail --silent "http://127.0.0.1:55419/api/projects/${project_id}/snapshots" > /tmp/xhs-executor-snapshots.json
           node -e "const fs=require('fs');const v=JSON.parse(fs.readFileSync('/tmp/xhs-executor-snapshots.json','utf8'));if(!Array.isArray(v.snapshots)||v.snapshots.length<1)process.exit(1)"
-          echo 'container configured executor -> snapshot check passed'
-      - name: Hosted container auth, billing, run, and persistence restart gate
+          echo 'container first-party agent bridge -> gateway -> Harvest v2 -> snapshot check passed'
+      - name: Hosted container auth, billing, agent bridge run, and persistence restart gate
         shell: bash
         run: |
           set -euo pipefail
@@ -200,10 +204,10 @@ jobs:
               -e XHS_STUDIO_STRIPE_WEBHOOK_SECRET="$webhook_secret" \
               -e XHS_STUDIO_STRIPE_PRICE_PILOT=price_container_pilot \
               -e XHS_STUDIO_HARVEST_EXECUTOR=node \
-              -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["test/fixtures/mock-harvest-executor.mjs"]' \
-              -e XHS_EXECUTOR_FIXTURE_PATH=/app/public/demo-harvest.json \
-              -e XHS_EXECUTOR_MODE=success \
-              xhs-research-studio:test >/dev/null
+              -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["harvest-agent-adapter.mjs"]' \
+              -e XHS_EXECUTOR_AGENT_GATEWAY=http://127.0.0.1:55421/jobs \
+              xhs-research-studio:test \
+              sh -c 'node test/fixtures/mock-harvest-agent-gateway.mjs & exec node server.mjs' >/dev/null
           }
           wait_hosted() {
             for i in {1..60}; do
@@ -234,4 +238,4 @@ jobs:
           XHS_HOSTED_SMOKE_BASE=http://127.0.0.1:55420 \
           XHS_HOSTED_SMOKE_STATE="$state" \
             node products/xhs-research-studio/hosted-container-smoke.mjs verify
-          echo 'hosted container persistence restart check passed'
+          echo 'hosted container first-party agent bridge + persistence restart check passed'
