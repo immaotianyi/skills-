@@ -1,12 +1,19 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { requireHostedSession } from './hosted-http.mjs';
+import { getProjects as loadProjects } from './storage.mjs';
 import { buildWorkspaceDashboard } from './workspace-dashboard.mjs';
 import { acknowledgeAlert, clearAlertAcknowledgement, decorateAlertsWithAcknowledgements } from './alert-state.mjs';
+
+const moduleDir=path.dirname(fileURLToPath(import.meta.url));
+const productRoot=path.dirname(moduleDir);
 
 export class WorkspaceDashboardHttpError extends Error{
   constructor(statusCode,message,code='WORKSPACE_DASHBOARD_ERROR'){super(message);this.statusCode=statusCode;this.code=code}
 }
 
 function parseLimit(value,fallback=100,max=500){const n=Math.trunc(Number(value));return Number.isFinite(n)&&n>0?Math.min(max,n):fallback}
+function resolveDataDir(env=process.env){return env.XHS_STUDIO_DATA||path.join(productRoot,'data')}
 
 async function dashboardFor({store,dataDir,getProjects,workspaceId,alertLimit=100}){
   const projects=await getProjects();
@@ -14,7 +21,7 @@ async function dashboardFor({store,dataDir,getProjects,workspaceId,alertLimit=10
   return {...dashboard,alerts:decorateAlertsWithAcknowledgements(store,workspaceId,dashboard.alerts)};
 }
 
-export async function handleWorkspaceDashboardApi({req,res,url,store,dataDir,getProjects,readJson,send}){
+export async function handleWorkspaceDashboardApi({req,res,url,store,readJson,send,env=process.env,dataDir=resolveDataDir(env),getProjects=()=>loadProjects(dataDir)}){
   const parts=url.pathname.split('/').filter(Boolean);
   if(parts[0]!=='api'||parts[1]!=='workspaces'||!parts[2])return false;
   const workspaceId=parts[2];
