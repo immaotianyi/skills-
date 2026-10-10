@@ -34,8 +34,8 @@ try {
   assert.equal(ready,true,'server did not start');
 
   const health=await request('/api/health');
-  assert.equal(health.version,'0.4.0-hosted-beta');
-  assert.equal(health.hosted,false,'default local mode must remain non-hosted unless explicitly enabled');
+  assert.equal(health.version,'0.3.0-hardening');
+  assert.equal(health.hosted,undefined,'local mode must stay on the stable non-hosted server path');
 
   const templates=await request('/api/templates');
   assert.ok(templates.templates.length>=3);
