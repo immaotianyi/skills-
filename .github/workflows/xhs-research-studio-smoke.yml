@@ -54,6 +54,9 @@ jobs:
           node --check products/xhs-research-studio/lib/hosted-policy.mjs
           node --check products/xhs-research-studio/lib/billing.mjs
           node --check products/xhs-research-studio/lib/hosted-http.mjs
+          node --check products/xhs-research-studio/lib/hosted-members.mjs
+          node --check products/xhs-research-studio/lib/hosted-members-http.mjs
+          node --check products/xhs-research-studio/lib/synthesis.mjs
           node --check products/xhs-research-studio/smoke-test.mjs
       - name: Core unit, security, compatibility, and scale tests
         run: node --test products/xhs-research-studio/test/*.test.mjs
