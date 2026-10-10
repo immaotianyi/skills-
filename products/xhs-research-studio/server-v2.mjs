@@ -13,7 +13,8 @@ const DATA_DIR = process.env.XHS_STUDIO_DATA || path.join(__dirname, 'data');
 const PUBLIC_DIR = path.resolve(__dirname, 'public');
 const PORT = Number(process.env.PORT || 5418);
 const HOST = process.env.HOST || '127.0.0.1';
-const MAX_BODY_BYTES = Number(process.env.XHS_STUDIO_MAX_BODY || 15_000_000);
+const configuredBodyLimit = Number(process.env.XHS_STUDIO_MAX_BODY || 15_000_000);
+const MAX_BODY_BYTES = Number.isFinite(configuredBodyLimit) && configuredBodyLimit > 0 ? configuredBodyLimit : 15_000_000;
 const VERSION = '0.3.0-hardening';
 
 const PROJECT_TEMPLATES = [
@@ -35,8 +36,8 @@ function slug(v='') {
 }
 
 function csvCell(v) {
-  const s=String(v ?? '');
-  return /[\",\n]/u.test(s) ? `\"${s.replace(/\"/g,'\"\"')}\"` : s;
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
 }
 
 function evidenceCsv(h) {
@@ -128,8 +129,8 @@ function notFound(res) { send(res,404,{error:'not found'}); }
 function sendError(res, err) {
   const status = Number(err?.statusCode) || (err instanceof HarvestValidationError ? err.statusCode : 500) || 500;
   const safeStatus = status >= 400 && status <= 599 ? status : 500;
-  const body = { error: err?.message || String(err) };
-  if (Array.isArray(err?.details) && err.details.length) body.details = err.details;
+  const body = { error: safeStatus >= 500 ? 'internal server error' : (err?.message || String(err)) };
+  if (safeStatus < 500 && Array.isArray(err?.details) && err.details.length) body.details = err.details;
   send(res,safeStatus,body);
 }
 
@@ -149,7 +150,7 @@ async function latestSnapshot(projectId, requested='') {
 async function api(req,res,url) {
   const parts=url.pathname.split('/').filter(Boolean);
   if (url.pathname==='/api/health' && req.method==='GET') {
-    return send(res,200,{ok:true,product:'XHS Research Studio',version:VERSION,time:new Date().toISOString(),dataDir:DATA_DIR});
+    return send(res,200,{ok:true,product:'XHS Research Studio',version:VERSION,time:new Date().toISOString()});
   }
   if (url.pathname==='/api/templates' && req.method==='GET') return send(res,200,{templates:PROJECT_TEMPLATES});
   if (url.pathname==='/api/projects' && req.method==='GET') return send(res,200,{projects:await getProjects(DATA_DIR)});
