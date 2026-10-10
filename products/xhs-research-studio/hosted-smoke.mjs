@@ -16,19 +16,27 @@ const fixture=path.join(root,'public','demo-harvest.json');
 const harvestExecutor=path.join(root,'test','fixtures','mock-harvest-executor.mjs');
 const synthesisExecutor=path.join(root,'test','fixtures','mock-synthesis-executor.mjs');
 const child=spawn(process.execPath,[path.join(root,'server-v3.mjs')],{cwd:root,stdio:['ignore','pipe','pipe'],env:{...process.env,PORT:String(port),HOST:'127.0.0.1',XHS_STUDIO_DATA:dataDir,XHS_STUDIO_HOSTED:'1',XHS_STUDIO_PUBLIC_URL:base,XHS_STUDIO_STRIPE_WEBHOOK_SECRET:signingSecret,XHS_STUDIO_STRIPE_PRICE_PILOT:'price_test_pilot',XHS_STUDIO_HARVEST_EXECUTOR:process.execPath,XHS_STUDIO_HARVEST_EXECUTOR_ARGS:JSON.stringify([harvestExecutor]),XHS_EXECUTOR_FIXTURE_PATH:fixture,XHS_EXECUTOR_MODE:'success',XHS_STUDIO_SYNTHESIS_EXECUTOR:process.execPath,XHS_STUDIO_SYNTHESIS_EXECUTOR_ARGS:JSON.stringify([synthesisExecutor])}});
-let logs='';child.stdout.on('data',c=>{logs+=c});child.stderr.on('data',c=>{logs+=c});
+let logs='',exitInfo=null;
+child.stdout.on('data',c=>{logs+=c.toString('utf8')});
+child.stderr.on('data',c=>{logs+=c.toString('utf8')});
+child.on('exit',(code,signal)=>{exitInfo={code,signal}});
 const assert=(condition,message)=>{if(!condition)throw new Error(message)};
 const cookieOf=response=>(response.headers.get('set-cookie')||'').split(';')[0];
+function diagnostics(){return `serverExit=${JSON.stringify(exitInfo)}\n--- server logs ---\n${logs.slice(-12000)}`}
 async function call(url,{method='GET',body,cookie,workspaceId,status=200,raw,headers={}}={}){
   const h={...headers};if(cookie)h.cookie=cookie;if(workspaceId)h['x-xhs-workspace-id']=workspaceId;
   if(!['GET','HEAD'].includes(method)&&url!=='/api/billing/webhook')h.origin=base;
   let payload;if(raw!==undefined){payload=raw;h['content-type']='application/json'}else if(body!==undefined){payload=JSON.stringify(body);h['content-type']='application/json'}
-  const response=await fetch(`${base}${url}`,{method,headers:h,body:payload});const text=await response.text();let data=text;try{data=JSON.parse(text)}catch{}
-  if(response.status!==status)throw new Error(`${method} ${url}: ${response.status} ${text}`);return{response,data,text};
+  let response;
+  try{response=await fetch(`${base}${url}`,{method,headers:h,body:payload})}
+  catch(error){throw new Error(`${method} ${url}: network failure: ${error?.cause?.code||error.message}\n${diagnostics()}`,{cause:error})}
+  const text=await response.text();let data=text;try{data=JSON.parse(text)}catch{}
+  if(response.status!==status)throw new Error(`${method} ${url}: expected ${status}, got ${response.status}: ${text}\n${diagnostics()}`);return{response,data,text};
 }
-async function waitHealth(){for(let i=0;i<100;i++){try{if((await fetch(`${base}/api/health`)).ok)return}catch{}await new Promise(r=>setTimeout(r,80))}throw new Error(`hosted server not healthy: ${logs}`)}
-async function waitRun(projectId,cookie,workspaceId){for(let i=0;i<120;i++){const data=(await call(`/api/projects/${projectId}/runs`,{cookie,workspaceId})).data;const run=data.runs?.at(-1)||data.runs?.[0];if(run&&['completed','failed','manual_action_required','cancelled'].includes(run.state))return run;await new Promise(r=>setTimeout(r,80))}throw new Error('run timeout')}
+async function waitHealth(){for(let i=0;i<100;i++){try{if((await fetch(`${base}/api/health`)).ok)return}catch{}if(exitInfo)break;await new Promise(r=>setTimeout(r,80))}throw new Error(`hosted server not healthy\n${diagnostics()}`)}
+async function waitRun(projectId,cookie,workspaceId){for(let i=0;i<120;i++){const data=(await call(`/api/projects/${projectId}/runs`,{cookie,workspaceId})).data;const run=data.runs?.at(-1)||data.runs?.[0];if(run&&['completed','failed','manual_action_required','cancelled'].includes(run.state))return run;await new Promise(r=>setTimeout(r,80))}throw new Error(`run timeout\n${diagnostics()}`)}
 
+let failure=null;
 try{
   await waitHealth();
   assert((await call('/api/health')).data.hosted===true,'hosted mode not active');
@@ -62,6 +70,13 @@ try{
   await call(`/api/workspaces/${workspaceId}/members/${analyst.id}`,{method:'PATCH',cookie:ownerCookie,workspaceId,body:{role:'viewer'}});
   await call(`/api/projects/${project.id}/synthesis`,{method:'POST',cookie:analystCookie,workspaceId,body:{},status:403});
   console.log(JSON.stringify({ok:true,workspaceId,projectId:project.id,runId:run.id,snapshotId:run.snapshotId,usage,synthesisClaims:synthesis.claims.length,shareId:share.id},null,2));
+}catch(error){
+  failure=error;
+  console.error(error.stack||error);
+  console.error(diagnostics());
 }finally{
-  child.kill('SIGTERM');await new Promise(resolve=>{const timer=setTimeout(resolve,2500);child.once('exit',()=>{clearTimeout(timer);resolve()})});await fs.rm(dataDir,{recursive:true,force:true});
+  if(!exitInfo)child.kill('SIGTERM');
+  if(!exitInfo)await new Promise(resolve=>{const timer=setTimeout(resolve,2500);child.once('exit',()=>{clearTimeout(timer);resolve()})});
+  await fs.rm(dataDir,{recursive:true,force:true});
 }
+if(failure)throw failure;
