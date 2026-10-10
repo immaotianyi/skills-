@@ -7,6 +7,7 @@ import {
   revokeWorkspaceInvitation,
 } from './hosted-members.mjs';
 import { getWorkspaceBranding, updateWorkspaceBranding } from './branding.mjs';
+import { createSavedTemplate, deleteSavedTemplate, listSavedTemplates } from './saved-templates.mjs';
 
 function origin(req,env=process.env){
   const configured=String(env.XHS_STUDIO_PUBLIC_URL||'').trim().replace(/\/$/u,'');
@@ -29,6 +30,21 @@ export async function handleHostedMembersApi({req,res,url,store,readJson,send,en
   if(parts[0]!=='api'||parts[1]!=='workspaces'||!parts[2])return false;
   const workspaceId=parts[2];
   const session=requireHostedSession(req,store);
+
+  if(parts[3]==='templates'&&parts.length===4&&req.method==='GET'){
+    return send(res,200,{templates:listSavedTemplates(store,{actorUserId:session.user.id,workspaceId})});
+  }
+  if(parts[3]==='templates'&&parts.length===4&&req.method==='POST'){
+    assertSameOrigin(req,env);
+    const body=await readJson(req);
+    const template=createSavedTemplate(store,{actorUserId:session.user.id,workspaceId,input:body});
+    return send(res,201,{template});
+  }
+  if(parts[3]==='templates'&&parts[4]&&parts.length===5&&req.method==='DELETE'){
+    assertSameOrigin(req,env);
+    deleteSavedTemplate(store,{actorUserId:session.user.id,workspaceId,templateId:parts[4]});
+    return send(res,200,{ok:true,id:parts[4]});
+  }
 
   if(parts[3]==='branding'&&parts.length===4&&req.method==='GET'){
     store.requireRole(session.user.id,workspaceId);
