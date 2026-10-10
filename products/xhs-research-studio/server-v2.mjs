@@ -8,6 +8,7 @@ import { analyze, diffHarvest, evidenceClusters, rankingSummary, markdownReport 
 import { HarvestValidationError, validateHarvestInput, validateNormalizedHarvest } from './lib/validation.mjs';
 import { ensureData, getProjects, mutateProjects, getProject, listSnapshots, loadSnapshot, saveSnapshot, makeId } from './lib/storage.mjs';
 import { buildEvidencePack, verifyEvidencePack } from './lib/evidence-pack.mjs';
+import { attachmentContentDisposition } from './lib/content-disposition.mjs';
 import { RunService } from './lib/run-service.mjs';
 import { handleProjectRunApi } from './lib/run-http.mjs';
 
@@ -247,7 +248,7 @@ async function api(req,res,url) {
     }
     if (parts[3]==='export.csv' && req.method==='GET') {
       const {snapshot}=await latestSnapshot(project.id,url.searchParams.get('snapshot')||'');
-      return send(res,200,evidenceCsv(snapshot.harvest),'text/csv; charset=utf-8',{'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence.csv"`});
+      return send(res,200,evidenceCsv(snapshot.harvest),'text/csv; charset=utf-8',{'content-disposition':attachmentContentDisposition(`${project.slug||'xhs'}-evidence.csv`,{fallback:'xhs-evidence.csv'})});
     }
     if (parts[3]==='evidence-pack' && req.method==='GET') {
       const {snapshot}=await latestSnapshot(project.id,url.searchParams.get('snapshot')||'');
@@ -256,7 +257,7 @@ async function api(req,res,url) {
       if(version==='1.1') {
         if(requireAuthenticated) throw new HttpError(409,'Authenticated Evidence Pack requires version 1.2; refusing to downgrade to v1.1.');
         return send(res,200,legacyEvidencePack(project,snapshot),'application/json; charset=utf-8',{
-          'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack-v1.1.json"`,
+          'content-disposition':attachmentContentDisposition(`${project.slug||'xhs'}-evidence-pack-v1.1.json`,{fallback:'xhs-evidence-pack-v1.1.json'}),
           'x-xhs-evidence-pack-version':'1.1',
           'x-xhs-evidence-pack-authenticated':'false',
         });
@@ -269,7 +270,7 @@ async function api(req,res,url) {
         throw new HttpError(409,'Authenticated Evidence Pack requires both an authenticated source snapshot and a configured Pack HMAC key.');
       }
       return send(res,200,pack,'application/json; charset=utf-8',{
-        'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack-v1.2.json"`,
+        'content-disposition':attachmentContentDisposition(`${project.slug||'xhs'}-evidence-pack-v1.2.json`,{fallback:'xhs-evidence-pack-v1.2.json'}),
         'x-xhs-evidence-pack-version':'1.2',
         'x-xhs-evidence-pack-authenticated':String(verification.authenticated===true),
       });
