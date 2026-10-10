@@ -61,6 +61,21 @@ try{
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('Portfolio')&&document.querySelector('#hostedPanel').innerText.includes('Demo')&&document.querySelector('#hostedPanel').innerText.includes('有快照')`),{attempts:240,label:'agency portfolio panel',diagnostic});
   assert.equal(await evaluate(`document.querySelectorAll('#portfolioRows [data-portfolio-project]').length>=1`),true);
 
+  await poll(()=>evaluate(`!!document.querySelector('#hostedBranding')`),{label:'hosted branding button',diagnostic});
+  await evaluate(`document.querySelector('#hostedBranding').click();true`);
+  await poll(()=>evaluate(`!!document.querySelector('#brandingForm')&&document.querySelector('#hostedPanel').innerText.includes('客户报告品牌')`),{attempts:240,label:'branding editor',diagnostic});
+  await evaluate(`(()=>{const f=document.querySelector('#brandingForm');f.elements.agencyName.value='North Star Agency';f.elements.reportTitle.value='Client Intelligence Brief';f.elements.accentColor.value='#0055aa';f.elements.footerText.value='Confidential client delivery';f.requestSubmit();return true})()`);
+  await poll(()=>evaluate(`document.querySelector('#brandingStatus')?.innerText.includes('已保存')&&document.querySelector('#brandingPreview')?.innerText.includes('North Star Agency')&&document.querySelector('#brandingPreview')?.innerText.includes('Client Intelligence Brief')`),{attempts:240,label:'saved branding preview',diagnostic});
+  const brandedShare=await evaluate(`(async()=>{const projects=await fetch('/api/projects').then(r=>r.json());const project=(projects.projects||[]).find(p=>/Demo/.test(p.name))||projects.projects?.[0];if(!project)throw new Error('no project for branded share');const created=await fetch('/api/workspaces/${workspaceId}/shares',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({projectId:project.id})});if(!created.ok)throw new Error('share create '+created.status+': '+await created.text());const payload=await created.json();const response=await fetch(payload.share.url);const html=await response.text();return{status:response.status,cache:response.headers.get('cache-control'),csp:response.headers.get('content-security-policy'),html}})()`);
+  assert.equal(brandedShare.status,200);
+  assert.match(brandedShare.cache||'',/no-store/u);
+  assert.match(brandedShare.csp||'',/frame-ancestors 'none'/u);
+  assert.match(brandedShare.html,/North Star Agency/u);
+  assert.match(brandedShare.html,/Client Intelligence Brief/u);
+  assert.match(brandedShare.html,/Confidential client delivery/u);
+  assert.match(brandedShare.html,/--accent:#0055aa/u);
+  assert.match(brandedShare.html,/Demo/u);
+
   await evaluate(`document.querySelector('#hostedProjectActions').click();true`);
   await poll(()=>evaluate(`!!document.querySelector('#hostedSynthesis')&&!document.querySelector('#hostedSynthesis').disabled`),{label:'hosted project action panel',diagnostic});
   assert.equal(await evaluate(`!!document.querySelector('#hostedShare')&&!document.querySelector('#hostedShare').disabled`),true);
@@ -71,7 +86,7 @@ try{
   await poll(()=>evaluate(`document.querySelector('#hostedPanel').innerText.includes('pilot / active')&&!!document.querySelector('#hostedPortal')`),{label:'hosted billing controls',diagnostic});
   await sleep(150);
   assert.deepEqual(browserErrors,[],`browser errors: ${browserErrors.join(' | ')}`);
-  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
+  console.log(JSON.stringify({ok:true,chrome:path.basename(chromeBin),workspaceId,hostedPlan:await evaluate(`document.querySelector('#hostedPlan').innerText`),topNotes:await evaluate(`document.querySelectorAll('#topNotes .note').length`),agencyPortfolio:true,whiteLabelShare:true,groundedSynthesis:true,billingPortalVisible:true,browserErrors},null,2));
 }finally{
   try{socket?.close()}catch{}
   await terminate(chrome);await terminate(server);
