@@ -172,6 +172,41 @@ test('RunService schedule tick claims due schedule and produces a scheduled snap
   }finally{await fs.rm(dataDir,{recursive:true,force:true})}
 });
 
+test('scheduled manual-action safety stop pauses recurrence until operator re-enables it',async()=>{
+  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-service-schedule-pause-'));
+  try{
+    const project=await seedProject(dataDir,'prj_scheduled_pause');
+    await withEnv({
+      XHS_STUDIO_HARVEST_EXECUTOR:process.execPath,
+      XHS_STUDIO_HARVEST_EXECUTOR_ARGS:JSON.stringify([mock]),
+      XHS_EXECUTOR_FIXTURE_PATH:fixture,
+      XHS_EXECUTOR_MODE:'manual',
+    },async()=>{
+      const service=new RunService(dataDir,{schedulerTickMs:60_000});
+      const schedule=await service.createSchedule(project.id,{intervalMinutes:60,startAt:new Date(Date.now()-1000).toISOString()});
+      assert.equal(await service.tick(),1);
+      let runs=[];
+      const until=Date.now()+7000;
+      while(Date.now()<until){runs=await service.runs(project.id);if(runs[0]?.state==='manual_action_required')break;await sleep(25)}
+      assert.equal(runs.length,1);
+      assert.equal(runs[0].state,'manual_action_required');
+      assert.equal(runs[0].riskState,'CAPTCHA');
+      let paused=await service.schedule(schedule.id);
+      assert.equal(paused.enabled,false,'schedule must pause after manual safety handoff');
+      assert.equal(paused.lastRunState,'manual_action_required');
+      assert.equal(paused.lastRunId,runs[0].id);
+
+      // Even if an operator/admin moves nextRunAt back into the past without
+      // explicitly re-enabling the schedule, the scheduler must not auto-retry.
+      paused=await service.updateSchedule(schedule.id,{nextRunAt:new Date(Date.now()-1000).toISOString()});
+      assert.equal(paused.enabled,false);
+      assert.equal(await service.tick(),0);
+      assert.equal((await service.runs(project.id)).length,1);
+      assert.equal((await listSnapshots(dataDir,project.id)).length,0);
+    });
+  }finally{await fs.rm(dataDir,{recursive:true,force:true})}
+});
+
 test('restart recovery fails closed for interrupted running executor state',async()=>{
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'xhs-run-recover-'));
   try{
