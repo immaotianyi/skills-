@@ -4,11 +4,11 @@ import { listSchedules } from './schedules.mjs';
 import { listSnapshots } from './storage.mjs';
 
 const LEVEL_WEIGHT=Object.freeze({high:3,medium:2,low:1,info:0});
-const TERMINAL_FAILURE_STATES=new Set(['failed','manual_action_required']);
 
 function safe(value,max=500){return String(value??'').trim().slice(0,max)}
 function stableAlertId(parts){return `alt_${crypto.createHash('sha256').update(parts.map(value=>String(value??'')).join('\0')).digest('hex').slice(0,24)}`}
 function newest(rows,key='createdAt'){return [...(rows||[])].sort((a,b)=>(Date.parse(b?.[key]||'')||0)-(Date.parse(a?.[key]||'')||0)||String(b?.id||'').localeCompare(String(a?.id||'')))[0]||null}
+function earliest(rows,key){return [...(rows||[])].filter(row=>Number.isFinite(Date.parse(row?.[key]||''))).sort((a,b)=>Date.parse(a[key])-Date.parse(b[key])||String(a?.id||'').localeCompare(String(b?.id||'')))[0]||null}
 function sourcePaths(projectId,run){return {
   project:`/api/projects/${encodeURIComponent(projectId)}`,
   run:run?.id?`/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(run.id)}`:null,
@@ -58,7 +58,7 @@ export async function buildWorkspaceDashboard(dataDir,{workspaceId,projects=[],a
     ]);
     const recentRuns=allRuns.slice(-Math.max(1,Math.min(100,Math.trunc(runHistoryLimit)||20)));
     const latestRun=newest(allRuns),latestSnapshot=snapshots.at(-1)||null;
-    const enabled=schedules.filter(row=>row.enabled);
+    const enabled=schedules.filter(row=>row.enabled),nextSchedule=earliest(enabled,'nextRunAt');
     const projectActive=allRuns.filter(run=>['queued','running'].includes(run.state)).length;
     const projectManual=allRuns.filter(run=>run.state==='manual_action_required').length;
     const projectFailed=allRuns.filter(run=>run.state==='failed').length;
@@ -77,7 +77,7 @@ export async function buildWorkspaceDashboard(dataDir,{workspaceId,projects=[],a
       id:project.id,name:project.name,client:project.client||'',category:project.category||'',updatedAt:project.updatedAt||null,
       latestSnapshot:latestSnapshot?{id:latestSnapshot.id,createdAt:latestSnapshot.createdAt,quality:latestSnapshot.quality||null,coverage:latestSnapshot.coverage||null,integrityStatus:latestSnapshot.integrityStatus||null}:null,
       latestRun:latestRun?{id:latestRun.id,state:latestRun.state,trigger:latestRun.trigger,createdAt:latestRun.createdAt,finishedAt:latestRun.finishedAt,snapshotId:latestRun.snapshotId,riskState:latestRun.riskState,counts:latestRun.counts,error:latestRun.error}:null,
-      schedules:{total:schedules.length,enabled:enabled.length,nextRunAt:newest(enabled,'nextRunAt')?.nextRunAt||null},
+      schedules:{total:schedules.length,enabled:enabled.length,nextRunAt:nextSchedule?.nextRunAt||null},
       health:{activeRuns:projectActive,manualActionRequired:projectManual,failedRuns:projectFailed},
     });
   }
