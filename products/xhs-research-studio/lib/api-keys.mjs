@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-const SCOPES=new Set(['read:dashboard','read:research','write:runs','write:shares','write:webhooks']);
+const SCOPES=new Set(['read:dashboard','read:research']);
 const ACTIVE_ENTITLEMENTS=new Set(['active','trialing']);
 const TOKEN_PREFIX='xhs_sk_';
 const MAX_TTL_SECONDS=365*24*3600;
@@ -13,10 +13,11 @@ export class ApiKeyError extends Error{
 function hashToken(token){return crypto.createHash('sha256').update(String(token)).digest('hex')}
 function id(){return `key_${Date.now().toString(36)}_${crypto.randomBytes(5).toString('hex')}`}
 function normalizeScopes(scopes){
-  const clean=[...new Set((Array.isArray(scopes)?scopes:[]).map(String).filter(scope=>SCOPES.has(scope)))];
-  if(!clean.length)throw new ApiKeyError('At least one supported API key scope is required.',{code:'API_KEY_SCOPE_REQUIRED'});
-  if(clean.length!==(Array.isArray(scopes)?new Set(scopes.map(String)).size:0))throw new ApiKeyError('API key scopes contain an unsupported value.',{code:'API_KEY_SCOPE_INVALID'});
-  return clean.sort();
+  const requested=Array.isArray(scopes)?scopes.map(String):[];
+  const unique=[...new Set(requested)];
+  if(!unique.length)throw new ApiKeyError('At least one supported API key scope is required.',{code:'API_KEY_SCOPE_REQUIRED'});
+  if(unique.some(scope=>!SCOPES.has(scope)))throw new ApiKeyError('API key scopes contain an unsupported value.',{code:'API_KEY_SCOPE_INVALID'});
+  return unique.sort();
 }
 function ttlSeconds(value){const n=Math.trunc(Number(value));if(!Number.isFinite(n)||n<=0)return DEFAULT_TTL_SECONDS;return Math.max(3600,Math.min(MAX_TTL_SECONDS,n))}
 
