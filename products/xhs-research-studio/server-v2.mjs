@@ -248,7 +248,9 @@ async function api(req,res,url) {
     if (parts[3]==='evidence-pack' && req.method==='GET') {
       const {snapshot}=await latestSnapshot(project.id,url.searchParams.get('snapshot')||'');
       const version=requestedPackVersion(url);
+      const requireAuthenticated=requiresAuthenticatedPack(url);
       if(version==='1.1') {
+        if(requireAuthenticated) throw new HttpError(409,'Authenticated Evidence Pack requires version 1.2; refusing to downgrade to v1.1.');
         return send(res,200,legacyEvidencePack(project,snapshot),'application/json; charset=utf-8',{
           'content-disposition':`attachment; filename="${project.slug||'xhs'}-evidence-pack-v1.1.json"`,
           'x-xhs-evidence-pack-version':'1.1',
@@ -259,7 +261,7 @@ async function api(req,res,url) {
       const pack=buildEvidencePack(project,snapshot,options);
       const verification=verifyEvidencePack(pack,options);
       if(!verification.ok) throw new Error(`Generated Evidence Pack failed self-verification: ${JSON.stringify(verification.errors)}`);
-      if(requiresAuthenticatedPack(url) && (snapshot.integrityStatus?.authenticated!==true || verification.authenticated!==true)) {
+      if(requireAuthenticated && (snapshot.integrityStatus?.authenticated!==true || verification.authenticated!==true)) {
         throw new HttpError(409,'Authenticated Evidence Pack requires both an authenticated source snapshot and a configured Pack HMAC key.');
       }
       return send(res,200,pack,'application/json; charset=utf-8',{
