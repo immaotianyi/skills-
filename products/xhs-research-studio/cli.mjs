@@ -33,7 +33,29 @@ async function writeOrStdout(value,file=''){
   await fs.writeFile(file,text,'utf8');
   process.stdout.write(`${file}\n`);
 }
-function usage(){out(`XHS Research Studio CLI\n\nCommands:\n  health\n  projects\n  validate HARVEST.json\n  analyze HARVEST.json\n  create --name NAME [--client NAME] [--category NAME] [--keywords a,b] [--competitors a,b]\n  plan PROJECT_ID\n  ingest PROJECT_ID HARVEST.json\n  report PROJECT_ID [--out report.md]\n  diff PROJECT_ID\n  ranks PROJECT_ID\n  evidence PROJECT_ID [--term TERM]\n  pack PROJECT_ID [--version 1.1|1.2] [--require-authenticated 1] [--out evidence-pack.json]\n  csv PROJECT_ID [--out evidence.csv]\n\nOptions:\n  --base http://127.0.0.1:5418\n  or XHS_STUDIO_URL environment variable\n`)}
+function boolFlag(value){
+  const v=String(value||'').trim().toLowerCase();
+  if(['1','true','yes','on'].includes(v))return true;
+  if(['0','false','no','off'].includes(v))return false;
+  throw new Error(`expected boolean flag, got: ${value}`);
+}
+function numberFlag(value,name){
+  if(value==='')return undefined;
+  const n=Number(value);
+  if(!Number.isFinite(n))throw new Error(`--${name} must be numeric`);
+  return n;
+}
+function budgetFromFlags(){
+  const budget={};
+  const notes=numberFlag(take('max-notes'),'max-notes');
+  const comments=numberFlag(take('max-comments'),'max-comments');
+  const seconds=numberFlag(take('max-seconds'),'max-seconds');
+  if(notes!==undefined)budget.maxNotes=notes;
+  if(comments!==undefined)budget.maxComments=comments;
+  if(seconds!==undefined)budget.maxSeconds=seconds;
+  return budget;
+}
+function usage(){out(`XHS Research Studio CLI\n\nCommands:\n  health\n  run-system\n  projects\n  validate HARVEST.json\n  analyze HARVEST.json\n  create --name NAME [--client NAME] [--category NAME] [--keywords a,b] [--competitors a,b]\n  plan PROJECT_ID\n  ingest PROJECT_ID HARVEST.json\n  run PROJECT_ID [--max-notes N] [--max-comments N] [--max-seconds N]\n  runs PROJECT_ID\n  run-get PROJECT_ID RUN_ID\n  run-resume PROJECT_ID RUN_ID\n  run-cancel PROJECT_ID RUN_ID\n  schedules PROJECT_ID\n  schedule-create PROJECT_ID --interval-minutes N [--start-at ISO] [budget flags]\n  schedule-update PROJECT_ID SCHEDULE_ID [--enabled true|false] [--interval-minutes N] [--next-run-at ISO] [budget flags]\n  schedule-run PROJECT_ID SCHEDULE_ID\n  report PROJECT_ID [--out report.md]\n  diff PROJECT_ID\n  ranks PROJECT_ID\n  evidence PROJECT_ID [--term TERM]\n  pack PROJECT_ID [--version 1.1|1.2] [--require-authenticated 1] [--out evidence-pack.json]\n  csv PROJECT_ID [--out evidence.csv]\n\nOptions:\n  --base http://127.0.0.1:5418\n  or XHS_STUDIO_URL environment variable\n`)}
 
 async function fileJson(file){
   if(!file)throw new Error('HARVEST.json is required');
@@ -44,6 +66,7 @@ async function fileJson(file){
 async function main(){
   if(!command||command==='help'||command==='--help'){usage();return}
   if(command==='health'){out((await request('/api/health')).value);return}
+  if(command==='run-system'){out((await request('/api/run-system')).value);return}
   if(command==='projects'){out((await request('/api/projects')).value);return}
   if(command==='validate'){
     const raw=await fileJson(args.shift());
@@ -64,6 +87,45 @@ async function main(){
   if(command==='ingest'){
     const raw=await fileJson(args.shift());
     out((await request(`/api/projects/${projectId}/ingest`,{method:'POST',body:JSON.stringify(raw)})).value);return;
+  }
+  if(command==='run'){
+    const budget=budgetFromFlags();
+    out((await request(`/api/projects/${projectId}/runs`,{method:'POST',body:JSON.stringify({budget})})).value);return;
+  }
+  if(command==='runs'){out((await request(`/api/projects/${projectId}/runs`)).value);return}
+  if(command==='run-get'){
+    const runId=args.shift();if(!runId)throw new Error('RUN_ID is required');
+    out((await request(`/api/projects/${projectId}/runs/${runId}`)).value);return;
+  }
+  if(command==='run-resume'){
+    const runId=args.shift();if(!runId)throw new Error('RUN_ID is required');
+    out((await request(`/api/projects/${projectId}/runs/${runId}/resume`,{method:'POST',body:'{}'})).value);return;
+  }
+  if(command==='run-cancel'){
+    const runId=args.shift();if(!runId)throw new Error('RUN_ID is required');
+    out((await request(`/api/projects/${projectId}/runs/${runId}/cancel`,{method:'POST',body:'{}'})).value);return;
+  }
+  if(command==='schedules'){out((await request(`/api/projects/${projectId}/schedules`)).value);return}
+  if(command==='schedule-create'){
+    const intervalMinutes=numberFlag(take('interval-minutes'),'interval-minutes');
+    if(intervalMinutes===undefined)throw new Error('--interval-minutes is required');
+    const startAt=take('start-at');
+    const body={intervalMinutes,budget:budgetFromFlags()};
+    if(startAt)body.startAt=startAt;
+    out((await request(`/api/projects/${projectId}/schedules`,{method:'POST',body:JSON.stringify(body)})).value);return;
+  }
+  if(command==='schedule-update'){
+    const scheduleId=args.shift();if(!scheduleId)throw new Error('SCHEDULE_ID is required');
+    const body={};
+    const enabled=take('enabled');if(enabled!=='')body.enabled=boolFlag(enabled);
+    const intervalMinutes=numberFlag(take('interval-minutes'),'interval-minutes');if(intervalMinutes!==undefined)body.intervalMinutes=intervalMinutes;
+    const nextRunAt=take('next-run-at');if(nextRunAt)body.nextRunAt=nextRunAt;
+    const budget=budgetFromFlags();if(Object.keys(budget).length)body.budget=budget;
+    out((await request(`/api/projects/${projectId}/schedules/${scheduleId}`,{method:'PATCH',body:JSON.stringify(body)})).value);return;
+  }
+  if(command==='schedule-run'){
+    const scheduleId=args.shift();if(!scheduleId)throw new Error('SCHEDULE_ID is required');
+    out((await request(`/api/projects/${projectId}/schedules/${scheduleId}/run-now`,{method:'POST',body:'{}'})).value);return;
   }
   if(command==='report'){
     const file=take('out');
