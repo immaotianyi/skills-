@@ -13,8 +13,8 @@ const mock=path.join(root,'test','fixtures','mock-harvest-executor.mjs');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 async function waitRun(service,projectId,runId,states=['completed','manual_action_required','failed','cancelled'],timeout=7000){
-  const until=Date.now()+timeout;
-  while(Date.now()<until){
+  const attempts=Math.max(1,Math.ceil(Number(timeout||7000)/25));
+  for(let i=0;i<attempts;i++){
     const run=await service.run(projectId,runId);
     if(states.includes(run?.state))return run;
     await sleep(25);
@@ -88,8 +88,7 @@ test('RunService cancellation aborts executor and never ingests a snapshot',asyn
     },async()=>{
       const service=new RunService(dataDir);
       const queued=await service.launch(project,{budget:{maxSeconds:60}});
-      const until=Date.now()+2000;
-      while(Date.now()<until){const row=await service.run(project.id,queued.id);if(row?.state==='running')break;await sleep(10)}
+      for(let i=0;i<200;i++){const row=await service.run(project.id,queued.id);if(row?.state==='running')break;await sleep(10)}
       const cancelled=await service.cancel(project,queued.id);
       assert.equal(cancelled.state,'cancelled');
       const final=await waitRun(service,project.id,queued.id,['cancelled']);
@@ -158,8 +157,7 @@ test('RunService schedule tick claims due schedule and produces a scheduled snap
       const claimed=await service.tick();
       assert.equal(claimed,1);
       let runs=[];
-      const until=Date.now()+7000;
-      while(Date.now()<until){runs=await service.runs(project.id);if(runs[0]?.state==='completed')break;await sleep(25)}
+      for(let i=0;i<280;i++){runs=await service.runs(project.id);if(runs[0]?.state==='completed')break;await sleep(25)}
       assert.equal(runs.length,1);
       assert.equal(runs[0].trigger,'schedule');
       assert.equal(runs[0].scheduleId,schedule.id);
@@ -186,8 +184,7 @@ test('scheduled manual-action safety stop pauses recurrence until operator re-en
       const schedule=await service.createSchedule(project.id,{intervalMinutes:60,startAt:new Date(Date.now()-1000).toISOString()});
       assert.equal(await service.tick(),1);
       let runs=[];
-      const until=Date.now()+7000;
-      while(Date.now()<until){runs=await service.runs(project.id);if(runs[0]?.state==='manual_action_required')break;await sleep(25)}
+      for(let i=0;i<280;i++){runs=await service.runs(project.id);if(runs[0]?.state==='manual_action_required')break;await sleep(25)}
       assert.equal(runs.length,1);
       assert.equal(runs[0].state,'manual_action_required');
       assert.equal(runs[0].riskState,'CAPTCHA');
