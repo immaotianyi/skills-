@@ -6,6 +6,7 @@ import { analyze } from './analysis.mjs';
 import { HarvestValidationError, validateNormalizedHarvest } from './validation.mjs';
 
 const SAFE_ID_RE = /^[A-Za-z0-9._-]+$/u;
+const projectMutationQueues = new Map();
 
 export function makeId(prefix='id') {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
@@ -84,6 +85,21 @@ export async function getProjects(dataDir) {
 export async function saveProjects(dataDir, projects) {
   if (!Array.isArray(projects)) throw new TypeError('projects must be an array');
   await writeJsonAtomic(path.join(dataDir,'projects.json'), projects);
+}
+
+export async function mutateProjects(dataDir, mutator) {
+  if (typeof mutator !== 'function') throw new TypeError('mutator must be a function');
+  const key = path.resolve(dataDir);
+  const previous = projectMutationQueues.get(key) || Promise.resolve();
+  const run = previous.catch(()=>{}).then(async () => {
+    const projects = await getProjects(dataDir);
+    const result = await mutator(projects);
+    if (!Array.isArray(projects)) throw new TypeError('project mutator must preserve the projects array');
+    await saveProjects(dataDir, projects);
+    return result;
+  });
+  projectMutationQueues.set(key, run.then(()=>undefined,()=>undefined));
+  return run;
 }
 
 export async function getProject(dataDir, id) {
