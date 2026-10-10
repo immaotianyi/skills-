@@ -48,6 +48,8 @@ try{
   const raw=JSON.stringify(event),t=Math.floor(Date.now()/1000),sig=crypto.createHmac('sha256',signingSecret).update(`${t}.${raw}`).digest('hex');
   await call('/api/billing/webhook',{method:'POST',raw,headers:{'stripe-signature':`t=${t},v1=${sig}`}});
   const me=(await call('/api/me',{cookie:ownerCookie})).data;assert(me.workspaces.find(w=>w.id===workspaceId)?.entitlement?.status==='active','entitlement not active');
+  const duplicateCheckout=await call(`/api/workspaces/${workspaceId}/billing/checkout`,{method:'POST',cookie:ownerCookie,workspaceId,body:{plan:'pilot'},status:409});
+  assert(duplicateCheckout.data.code==='STRIPE_SUBSCRIPTION_EXISTS','active subscription must be managed through Billing Portal instead of duplicate Checkout');
 
   const project=(await call('/api/projects',{method:'POST',cookie:ownerCookie,workspaceId,body:{name:'Hosted Smoke Research',category:'防晒',keywords:['敏感肌防晒']},status:201})).data;
   const analystReg=await call('/api/auth/register',{method:'POST',body:{email:'analyst-smoke@example.test',password:testPassword,workspaceName:'Analyst'},status:201});
@@ -69,7 +71,7 @@ try{
   const members=(await call(`/api/workspaces/${workspaceId}/members`,{cookie:ownerCookie,workspaceId})).data.members,analyst=members.find(m=>m.email==='analyst-smoke@example.test');
   await call(`/api/workspaces/${workspaceId}/members/${analyst.id}`,{method:'PATCH',cookie:ownerCookie,workspaceId,body:{role:'viewer'}});
   await call(`/api/projects/${project.id}/synthesis`,{method:'POST',cookie:analystCookie,workspaceId,body:{},status:403});
-  console.log(JSON.stringify({ok:true,workspaceId,projectId:project.id,runId:run.id,snapshotId:run.snapshotId,usage,synthesisClaims:synthesis.claims.length,shareId:share.id},null,2));
+  console.log(JSON.stringify({ok:true,workspaceId,projectId:project.id,runId:run.id,snapshotId:run.snapshotId,usage,synthesisClaims:synthesis.claims.length,shareId:share.id,duplicateCheckoutBlocked:true},null,2));
 }catch(error){
   failure=error;
   console.error(error.stack||error);
