@@ -31,6 +31,7 @@ jobs:
           node --check products/xhs-research-studio/server.mjs
           node --check products/xhs-research-studio/server-v2.mjs
           node --check products/xhs-research-studio/public/app.js
+          node --check products/xhs-research-studio/public/pack-v12.js
           node --check products/xhs-research-studio/cli.mjs
           node --check products/xhs-research-studio/evaluate-signals.mjs
           node --check products/xhs-research-studio/export-signed-pack.mjs
