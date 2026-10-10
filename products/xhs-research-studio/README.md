@@ -87,6 +87,18 @@ node products/xhs-research-studio/server.mjs
 
 Do **not** commit the key. Supply it through your deployment secret manager/environment. A configured key shorter than 32 UTF-8 bytes is rejected.
 
+### Snapshot HMAC key rotation
+
+Treat `XHS_STUDIO_INTEGRITY_KEY_ID` as a versioned identifier and change it whenever the current HMAC secret changes. New snapshots are always written with only the current key. To keep historical authenticated snapshots verifiable after rotation, provide old keys through the read-only JSON keyring:
+
+```bash
+export XHS_STUDIO_INTEGRITY_KEY='new-current-secret-at-least-32-bytes'
+export XHS_STUDIO_INTEGRITY_KEY_ID='snapshot-prod-v2'
+export XHS_STUDIO_INTEGRITY_KEYRING='{"snapshot-prod-v1":"old-secret-at-least-32-bytes"}'
+```
+
+The current key wins when its `keyId` matches a snapshot. The keyring is used only for verification of older HMAC records; it is never used to sign new snapshots. Removing an old key from the keyring intentionally makes snapshots authenticated with that retired key unverifiable, so retain historical keys according to your evidence-retention policy. Compose passes all three variables through to the container.
+
 To create an authenticated Evidence Pack v1.2 from an authenticated snapshot:
 
 ```bash
@@ -183,7 +195,7 @@ The browser smoke uses a real headless Chrome/Chromium DevTools session: it open
 
 The GitHub Actions quality gate additionally builds the hardened Docker image, verifies the container is non-root, writes a project to the persistent data volume, restarts the container, and verifies the project is still present.
 
-The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior, Evidence Pack verification, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
+The automated suite covers unit/regression, malformed input, negation handling, safety states, URL sanitization, backward-compatible snapshot hydration, checksum/HMAC integrity behavior including historical-key rotation, Evidence Pack verification, API end-to-end flow, CLI delivery/export flow, signed-pack delivery, human-label evaluator execution, a 24-request concurrent project-create regression, exports, UI DOM/CSP contracts, Harvest Skill safety/provenance contracts, and a synthetic 500-note / 5,000-comment scale regression.
 
 Automated test success is engineering evidence, not scientific validation of consumer-insight claims. Real semantic validation still requires the independently reviewed holdout described above.
 
