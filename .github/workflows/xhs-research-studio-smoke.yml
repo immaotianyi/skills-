@@ -19,7 +19,7 @@ permissions:
 jobs:
   quality-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -41,6 +41,7 @@ jobs:
           node --check products/xhs-research-studio/browser-smoke.mjs
           node --check products/xhs-research-studio/hosted-smoke.mjs
           node --check products/xhs-research-studio/hosted-browser-smoke.mjs
+          node --check products/xhs-research-studio/hosted-container-smoke.mjs
           node --check products/xhs-research-studio/lib/normalize.mjs
           node --check products/xhs-research-studio/lib/analysis.mjs
           node --check products/xhs-research-studio/lib/storage.mjs
@@ -168,3 +169,64 @@ jobs:
           curl --fail --silent "http://127.0.0.1:55419/api/projects/${project_id}/snapshots" > /tmp/xhs-executor-snapshots.json
           node -e "const fs=require('fs');const v=JSON.parse(fs.readFileSync('/tmp/xhs-executor-snapshots.json','utf8'));if(!Array.isArray(v.snapshots)||v.snapshots.length<1)process.exit(1)"
           echo 'container configured executor -> snapshot check passed'
+      - name: Hosted container auth, billing, run, and persistence restart gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume=xhs-studio-hosted-test-data
+          name=xhs-research-studio-hosted-test
+          state=/tmp/xhs-hosted-container-state.json
+          webhook_secret="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
+          cleanup() {
+            docker stop "$name" >/dev/null 2>&1 || true
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+            rm -f "$state"
+          }
+          trap cleanup EXIT
+          docker volume create "$volume" >/dev/null
+          start_hosted() {
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker run -d --rm --name "$name" \
+              --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
+              -v "$volume":/data -p 127.0.0.1:55420:5418 \
+              -e XHS_STUDIO_HOSTED=1 \
+              -e XHS_STUDIO_PUBLIC_URL=http://127.0.0.1:55420 \
+              -e XHS_STUDIO_STRIPE_WEBHOOK_SECRET="$webhook_secret" \
+              -e XHS_STUDIO_STRIPE_PRICE_PILOT=price_container_pilot \
+              -e XHS_STUDIO_HARVEST_EXECUTOR=node \
+              -e 'XHS_STUDIO_HARVEST_EXECUTOR_ARGS=["test/fixtures/mock-harvest-executor.mjs"]' \
+              -e XHS_EXECUTOR_FIXTURE_PATH=/app/public/demo-harvest.json \
+              -e XHS_EXECUTOR_MODE=success \
+              xhs-research-studio:test >/dev/null
+          }
+          wait_hosted() {
+            for i in {1..60}; do
+              if curl --fail --silent http://127.0.0.1:55420/api/health > /tmp/xhs-hosted-health.json; then
+                grep -q '"hosted": true' /tmp/xhs-hosted-health.json
+                cat /tmp/xhs-hosted-health.json
+                return 0
+              fi
+              sleep 0.25
+            done
+            echo 'hosted container health endpoint did not become ready' >&2
+            docker logs "$name" || true
+            return 1
+          }
+
+          start_hosted
+          wait_hosted
+          uid="$(docker exec "$name" id -u)"
+          test "$uid" != "0"
+          XHS_HOSTED_SMOKE_BASE=http://127.0.0.1:55420 \
+          XHS_HOSTED_SMOKE_STATE="$state" \
+          XHS_HOSTED_SMOKE_WEBHOOK_SECRET="$webhook_secret" \
+            node products/xhs-research-studio/hosted-container-smoke.mjs seed
+
+          docker stop "$name" >/dev/null
+          start_hosted
+          wait_hosted
+          XHS_HOSTED_SMOKE_BASE=http://127.0.0.1:55420 \
+          XHS_HOSTED_SMOKE_STATE="$state" \
+            node products/xhs-research-studio/hosted-container-smoke.mjs verify
+          echo 'hosted container persistence restart check passed'
