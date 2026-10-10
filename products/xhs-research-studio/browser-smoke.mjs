@@ -43,6 +43,19 @@ async function poll(fn,{attempts=100,delay=50,label='condition',diagnostic=()=>'
   throw new Error(`Timed out waiting for ${label}${last instanceof Error?`: ${last.message}`:''}${extra?`\n${extra}`:''}`);
 }
 
+async function terminate(child,label) {
+  if(!child || child.exitCode!==null || child.killed) return;
+  const exited=new Promise(resolve=>child.once('exit',resolve));
+  child.kill('SIGTERM');
+  await Promise.race([exited,sleep(2000)]);
+  if(child.exitCode===null) {
+    const forcedExit=new Promise(resolve=>child.once('exit',resolve));
+    child.kill('SIGKILL');
+    await Promise.race([forcedExit,sleep(2000)]);
+  }
+  if(child.exitCode===null) console.warn(`${label} did not report exit before cleanup`);
+}
+
 const server=spawn(process.execPath,[path.join(root,'server.mjs')],{
   env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir},
   stdio:['ignore','pipe','pipe'],
@@ -89,7 +102,7 @@ try {
     } catch { return false; }
   },{attempts:400,delay:50,label:'Chrome DevTools endpoint',diagnostic:chromeDiagnostic});
 
-  let target=await poll(async()=>{
+  const target=await poll(async()=>{
     if(chrome.exitCode!==null) throw new Error(`Chrome exited with code ${chrome.exitCode}`);
     try {
       const list=await fetch(`${debugBase}/json/list`).then(r=>r.ok?r.json():[]);
@@ -185,10 +198,10 @@ try {
   },null,2));
 } finally {
   try { socket?.close(); } catch {}
-  chrome?.kill('SIGTERM');
-  server.kill('SIGTERM');
+  await terminate(chrome,'Chrome');
+  await terminate(server,'Studio server');
   await Promise.all([
-    fs.rm(dataDir,{recursive:true,force:true}),
-    fs.rm(chromeDir,{recursive:true,force:true}),
+    fs.rm(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100}),
+    fs.rm(chromeDir,{recursive:true,force:true,maxRetries:5,retryDelay:100}),
   ]);
 }
