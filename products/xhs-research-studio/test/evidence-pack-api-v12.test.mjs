@@ -14,12 +14,13 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const snapshotKey='api-v12-snapshot-integrity-key-at-least-32-bytes-2026';
 const packKey='api-v12-pack-integrity-key-at-least-32-bytes-2026';
 
-async function waitForHealth(base){
-  for(let i=0;i<80;i++){
+async function waitForHealth(base,{child,diagnostics}={}){
+  for(let i=0;i<200;i++){
+    if(child?.exitCode!==null||child?.signalCode!==null)break;
     try{const r=await fetch(`${base}/api/health`);if(r.ok)return}catch{}
     await sleep(50);
   }
-  throw new Error('server did not become healthy');
+  throw new Error(`server did not become healthy\n${diagnostics?.()||''}`);
 }
 
 async function createProjectAndIngest(base){
@@ -44,16 +45,24 @@ async function runServer(env,fn){
     env:{...process.env,PORT:String(port),XHS_STUDIO_DATA:dataDir,...env},
     stdio:['ignore','pipe','pipe'],
   });
+  let logs='';
+  child.stdout.on('data',chunk=>{logs=(logs+chunk.toString('utf8')).slice(-12000)});
+  child.stderr.on('data',chunk=>{logs=(logs+chunk.toString('utf8')).slice(-12000)});
+  const diagnostics=()=>`server exitCode=${child.exitCode} signal=${child.signalCode}\n--- server logs ---\n${logs}`;
   try{
-    await waitForHealth(base);
+    await waitForHealth(base,{child,diagnostics});
     await fn(base);
   } finally {
-    child.kill('SIGTERM');
+    if(child.exitCode===null&&child.signalCode===null){
+      const exited=new Promise(resolve=>child.once('exit',resolve));
+      child.kill('SIGTERM');
+      await Promise.race([exited,sleep(2000)]);
+    }
     await fs.rm(dataDir,{recursive:true,force:true});
   }
 }
 
-test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 with explicit negotiation',{timeout:20000},async()=>{
+test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 with explicit negotiation',{timeout:30000},async()=>{
   await runServer({
     XHS_STUDIO_INTEGRITY_KEY:snapshotKey,
     XHS_STUDIO_INTEGRITY_KEY_ID:'snapshot-api-v1',
@@ -90,7 +99,7 @@ test('HTTP Evidence Pack keeps v1.1 compatibility and offers authenticated v1.2 
   });
 });
 
-test('HTTP v1.2 authenticated mode fails closed when snapshot or pack authentication is unavailable',{timeout:20000},async()=>{
+test('HTTP v1.2 authenticated mode fails closed when snapshot or pack authentication is unavailable',{timeout:30000},async()=>{
   await runServer({},async base=>{
     const {project}=await createProjectAndIngest(base);
     const response=await fetch(`${base}/api/projects/${project.id}/evidence-pack?version=1.2&requireAuthenticated=1`);
