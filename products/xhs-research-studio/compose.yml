@@ -2,9 +2,14 @@ services:
   xhs-research-studio:
     build: .
     ports:
-      - "5418:5418"
+      - "127.0.0.1:5418:5418"
     volumes:
       - xhs_studio_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 volumes:
