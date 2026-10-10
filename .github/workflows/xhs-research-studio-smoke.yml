@@ -62,7 +62,7 @@ jobs:
           node --check products/xhs-research-studio/lib/synthesis.mjs
           node --check products/xhs-research-studio/smoke-test.mjs
       - name: Core unit, security, compatibility, and scale tests
-        run: node --test products/xhs-research-studio/test/*.test.mjs
+        run: node --test --test-concurrency=4 products/xhs-research-studio/test/*.test.mjs
       - name: End-to-end API smoke test
         run: node products/xhs-research-studio/smoke-test.mjs
       - name: Hosted paid-beta API smoke test
