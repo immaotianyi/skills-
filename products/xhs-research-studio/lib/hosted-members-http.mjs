@@ -6,6 +6,7 @@ import {
   listWorkspaceInvitations,
   revokeWorkspaceInvitation,
 } from './hosted-members.mjs';
+import { getWorkspaceBranding, updateWorkspaceBranding } from './branding.mjs';
 
 function origin(req,env=process.env){
   const configured=String(env.XHS_STUDIO_PUBLIC_URL||'').trim().replace(/\/$/u,'');
@@ -28,6 +29,17 @@ export async function handleHostedMembersApi({req,res,url,store,readJson,send,en
   if(parts[0]!=='api'||parts[1]!=='workspaces'||!parts[2])return false;
   const workspaceId=parts[2];
   const session=requireHostedSession(req,store);
+
+  if(parts[3]==='branding'&&parts.length===4&&req.method==='GET'){
+    store.requireRole(session.user.id,workspaceId);
+    return send(res,200,{branding:getWorkspaceBranding(store,workspaceId)});
+  }
+  if(parts[3]==='branding'&&parts.length===4&&req.method==='PATCH'){
+    assertSameOrigin(req,env);
+    const body=await readJson(req);
+    const branding=updateWorkspaceBranding(store,{actorUserId:session.user.id,workspaceId,input:body});
+    return send(res,200,{branding});
+  }
 
   if(parts[3]==='members'&&parts.length===4&&req.method==='GET'){
     return send(res,200,{members:listWorkspaceMembers(store,session.user.id,workspaceId)});

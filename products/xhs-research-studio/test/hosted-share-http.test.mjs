@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { handlePublicShare } from '../lib/hosted-http.mjs';
 
 const token='share_token_1234567890abcdef';
-const store={resolveShare:value=>value===token?{id:'shr_1',expiresAt:'2030-01-01T00:00:00.000Z'}:null};
+const brandingRow={agency_name:'North <Star>',report_title:'Client "Intelligence"',accent_color:'#123abc',footer_text:'Confidential <client>',updated_at:'2026-10-10T00:00:00.000Z'};
+const store={
+  resolveShare:value=>value===token?{id:'shr_1',workspaceId:'wsp_1',expiresAt:'2030-01-01T00:00:00.000Z'}:null,
+  db:{exec(){},prepare(){return{get(){return brandingRow}}}},
+};
 const shared={project:{name:'<script>"client"</script>'},markdown:'Evidence <b>must</b> stay "escaped".'};
 
 async function invoke(path){
@@ -21,7 +25,7 @@ async function invoke(path){
   return sent;
 }
 
-test('public HTML share is non-cacheable, non-indexable, framed-off, and HTML-escaped',async()=>{
+test('public HTML share applies safe workspace branding while preserving no-store, CSP, and escaping',async()=>{
   const sent=await invoke(`/share/${token}`);
   assert.equal(sent.status,200);
   assert.equal(sent.type,'text/html; charset=utf-8');
@@ -30,12 +34,16 @@ test('public HTML share is non-cacheable, non-indexable, framed-off, and HTML-es
   assert.equal(sent.headers['x-content-type-options'],'nosniff');
   assert.equal(sent.headers['x-robots-tag'],'noindex, nofollow');
   assert.match(sent.headers['content-security-policy'],/frame-ancestors 'none'/u);
+  assert.match(sent.body,/--accent:#123abc/u);
+  assert.match(sent.body,/North &lt;Star&gt;/u);
+  assert.match(sent.body,/Client &quot;Intelligence&quot;/u);
+  assert.match(sent.body,/Confidential &lt;client&gt;/u);
   assert.doesNotMatch(sent.body,/<script>/u);
   assert.match(sent.body,/&lt;script&gt;&quot;client&quot;&lt;\/script&gt;/u);
   assert.match(sent.body,/&lt;b&gt;must&lt;\/b&gt; stay &quot;escaped&quot;/u);
 });
 
-test('public shared-report JSON API is explicitly non-cacheable',async()=>{
+test('public shared-report JSON API is non-cacheable and includes normalized workspace branding',async()=>{
   const sent=await invoke(`/api/shared/${token}`);
   assert.equal(sent.status,200);
   assert.equal(sent.type,'application/json; charset=utf-8');
@@ -44,4 +52,5 @@ test('public shared-report JSON API is explicitly non-cacheable',async()=>{
   assert.equal(sent.headers['x-content-type-options'],'nosniff');
   assert.equal(sent.body.share.id,'shr_1');
   assert.deepEqual(sent.body.project,shared.project);
+  assert.deepEqual(sent.body.branding,{agencyName:'North <Star>',reportTitle:'Client "Intelligence"',accentColor:'#123abc',footerText:'Confidential <client>',updatedAt:'2026-10-10T00:00:00.000Z'});
 });
