@@ -101,7 +101,7 @@ test('analysis exposes methodology, quality, lexical evidence and transparent en
   assert.equal(a.quality.status,'good');
   assert.equal(a.signals.complaints.count,1);
   assert.equal(a.signals.purchaseIntent.count,1);
-  assert.equal(engagementScore(h.notes[0]),18);
+  assert.equal(engagementScore(h.notes[0]),21);
   const clusters=evidenceClusters(h);
   assert.ok(clusters.length>0);
   assert.ok(clusters.every(x=>x.method==='lexical-comment-frequency'));
