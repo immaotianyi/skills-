@@ -32,6 +32,7 @@ function findPlan(planId,env=process.env){
   if(!plan)throw new BillingError('Unknown billing plan.',{code:'PLAN_NOT_FOUND',statusCode:404});
   return plan;
 }
+function findPlanByPrice(priceId,env=process.env){return billingPlans(env).find(item=>item.priceId&&item.priceId===String(priceId||''))||null}
 function publicUrl(env=process.env){
   const value=String(env.XHS_STUDIO_PUBLIC_URL||'').trim().replace(/\/$/u,'');
   if(!/^https:\/\//u.test(value)&&!/^http:\/\/127\.0\.0\.1(?::\d+)?$/u.test(value)&&!/^http:\/\/localhost(?::\d+)?$/u.test(value)){
@@ -64,35 +65,18 @@ export function checkoutEligibility(entitlement={}){
   const subscriptionId=String(entitlement?.providerSubscriptionId||'').trim();
   const status=String(entitlement?.status||'inactive').trim();
   const existingManagedSubscription=Boolean(subscriptionId&&!TERMINAL_SUBSCRIPTION_STATUSES.has(status));
-  return {
-    allowed:!existingManagedSubscription,
-    usePortal:existingManagedSubscription,
-    customerId:String(entitlement?.providerCustomerId||'').trim()||null,
-    subscriptionId:subscriptionId||null,
-    status,
-  };
+  return {allowed:!existingManagedSubscription,usePortal:existingManagedSubscription,customerId:String(entitlement?.providerCustomerId||'').trim()||null,subscriptionId:subscriptionId||null,status};
 }
 
 export async function createStripeCheckoutSession({workspace,user,planId,entitlement={},fetchImpl=fetch,env=process.env}){
   const eligibility=checkoutEligibility(entitlement);
-  if(!eligibility.allowed){
-    throw new BillingError('This workspace already has a managed Stripe subscription. Use the Billing Portal to change plan, update payment details, view invoices, or cancel.',{code:'STRIPE_SUBSCRIPTION_EXISTS',statusCode:409});
-  }
+  if(!eligibility.allowed)throw new BillingError('This workspace already has a managed Stripe subscription. Use the Billing Portal to change plan, update payment details, view invoices, or cancel.',{code:'STRIPE_SUBSCRIPTION_EXISTS',statusCode:409});
   const plan=findPlan(planId,env);
   if(!plan.priceId)throw new BillingError(`Stripe price is not configured for plan ${plan.id}.`,{code:'PLAN_NOT_CONFIGURED',statusCode:503});
-  const origin=publicUrl(env);
-  const form=new URLSearchParams();
-  form.set('mode','subscription');
-  form.set('success_url',`${origin}/?billing=success`);
-  form.set('cancel_url',`${origin}/?billing=cancelled`);
-  form.set('client_reference_id',workspace.id);
+  const origin=publicUrl(env),form=new URLSearchParams();
+  form.set('mode','subscription');form.set('success_url',`${origin}/?billing=success`);form.set('cancel_url',`${origin}/?billing=cancelled`);form.set('client_reference_id',workspace.id);
   if(eligibility.customerId)form.set('customer',eligibility.customerId);else form.set('customer_email',user.email);
-  form.set('line_items[0][price]',plan.priceId);
-  form.set('line_items[0][quantity]','1');
-  form.set('metadata[workspace_id]',workspace.id);
-  form.set('metadata[plan]',plan.id);
-  form.set('subscription_data[metadata][workspace_id]',workspace.id);
-  form.set('subscription_data[metadata][plan]',plan.id);
+  form.set('line_items[0][price]',plan.priceId);form.set('line_items[0][quantity]','1');form.set('metadata[workspace_id]',workspace.id);form.set('metadata[plan]',plan.id);form.set('subscription_data[metadata][workspace_id]',workspace.id);form.set('subscription_data[metadata][plan]',plan.id);
   const data=await stripeFormRequest('/v1/checkout/sessions',form,{fetchImpl,env,errorCode:'STRIPE_CHECKOUT_FAILED'});
   if(!data?.id||!data?.url)throw new BillingError('Stripe Checkout Session response is incomplete.',{code:'STRIPE_CHECKOUT_FAILED',statusCode:502});
   return {id:data.id,url:data.url,plan:{id:plan.id,label:plan.label}};
@@ -101,10 +85,8 @@ export async function createStripeCheckoutSession({workspace,user,planId,entitle
 export async function createStripePortalSession({workspace,entitlement,fetchImpl=fetch,env=process.env}){
   const customerId=String(entitlement?.providerCustomerId||'').trim();
   if(!customerId)throw new BillingError('This workspace does not have a Stripe customer yet.',{code:'STRIPE_CUSTOMER_REQUIRED',statusCode:409});
-  const origin=publicUrl(env);
-  const form=new URLSearchParams();
-  form.set('customer',customerId);
-  form.set('return_url',`${origin}/?billing=portal-return`);
+  const origin=publicUrl(env),form=new URLSearchParams();
+  form.set('customer',customerId);form.set('return_url',`${origin}/?billing=portal-return`);
   if(env.XHS_STUDIO_STRIPE_PORTAL_CONFIGURATION_ID)form.set('configuration',String(env.XHS_STUDIO_STRIPE_PORTAL_CONFIGURATION_ID));
   const data=await stripeFormRequest('/v1/billing_portal/sessions',form,{fetchImpl,env,errorCode:'STRIPE_PORTAL_FAILED'});
   if(!data?.id||!data?.url)throw new BillingError('Stripe Billing Portal Session response is incomplete.',{code:'STRIPE_PORTAL_FAILED',statusCode:502});
@@ -113,32 +95,27 @@ export async function createStripePortalSession({workspace,entitlement,fetchImpl
 
 function safeHexEqual(a,b){
   if(!/^[0-9a-f]+$/iu.test(String(a||''))||!/^[0-9a-f]+$/iu.test(String(b||'')))return false;
-  const A=Buffer.from(a,'hex'),B=Buffer.from(b,'hex');
-  return A.length===B.length&&crypto.timingSafeEqual(A,B);
+  const A=Buffer.from(a,'hex'),B=Buffer.from(b,'hex');return A.length===B.length&&crypto.timingSafeEqual(A,B);
 }
 
 export function verifyStripeWebhook(rawBody,signatureHeader,secret,{toleranceSeconds=300,nowSeconds=Math.floor(Date.now()/1000)}={}){
   const body=Buffer.isBuffer(rawBody)?rawBody:Buffer.from(String(rawBody??''),'utf8');
   if(!body.length||!signatureHeader||!secret)throw new BillingError('Missing Stripe webhook signature inputs.',{code:'STRIPE_SIGNATURE',statusCode:400});
   const pairs=String(signatureHeader).split(',').map(part=>part.trim()).filter(Boolean).map(part=>{const i=part.indexOf('=');return i<0?[part,'']:[part.slice(0,i),part.slice(i+1)]});
-  const timestamp=pairs.find(([key])=>key==='t')?.[1];
-  const signatures=pairs.filter(([key,value])=>key==='v1'&&value).map(([,value])=>value);
-  const ts=Number(timestamp);
+  const timestamp=pairs.find(([key])=>key==='t')?.[1],signatures=pairs.filter(([key,value])=>key==='v1'&&value).map(([,value])=>value),ts=Number(timestamp);
   if(!Number.isInteger(ts)||!signatures.length)throw new BillingError('Malformed Stripe-Signature header.',{code:'STRIPE_SIGNATURE',statusCode:400});
   if(Math.abs(nowSeconds-ts)>Math.max(1,Number(toleranceSeconds)||300))throw new BillingError('Stripe webhook timestamp is outside the replay tolerance.',{code:'STRIPE_SIGNATURE_EXPIRED',statusCode:400});
   const expected=crypto.createHmac('sha256',secret).update(Buffer.concat([Buffer.from(`${timestamp}.`,'utf8'),body])).digest('hex');
   if(!signatures.some(signature=>safeHexEqual(signature,expected)))throw new BillingError('Invalid Stripe webhook signature.',{code:'STRIPE_SIGNATURE',statusCode:400});
-  let event;
-  try{event=JSON.parse(body.toString('utf8'))}catch{throw new BillingError('Stripe webhook body is not valid JSON.',{code:'STRIPE_WEBHOOK_JSON',statusCode:400})}
+  let event;try{event=JSON.parse(body.toString('utf8'))}catch{throw new BillingError('Stripe webhook body is not valid JSON.',{code:'STRIPE_WEBHOOK_JSON',statusCode:400})}
   if(!event?.id||!event?.type||!event?.data?.object)throw new BillingError('Stripe webhook event shape is incomplete.',{code:'STRIPE_WEBHOOK_SHAPE',statusCode:400});
   return event;
 }
 
 function entitlementFromPlan(plan,status,object={}){
-  const period=Number(object.current_period_end);
+  const period=Number(object.current_period_end??object.items?.data?.[0]?.current_period_end);
   return {
-    plan:plan.id,status:String(status||'inactive'),
-    providerCustomerId:typeof object.customer==='string'?object.customer:null,
+    plan:plan.id,status:String(status||'inactive'),providerCustomerId:typeof object.customer==='string'?object.customer:null,
     providerSubscriptionId:typeof object.subscription==='string'?object.subscription:(String(object.object)==='subscription'?object.id:null),
     currentPeriodEnd:Number.isFinite(period)&&period>0?new Date(period*1000).toISOString():null,
     maxProjects:plan.maxProjects,maxRunsMonth:plan.maxRunsMonth,maxNotesRun:plan.maxNotesRun,maxCommentsRun:plan.maxCommentsRun,
@@ -146,43 +123,41 @@ function entitlementFromPlan(plan,status,object={}){
 }
 
 function eventWorkspacePlan(event,env){
-  const object=event.data.object||{};
-  const metadata=object.metadata||{};
-  const workspaceId=String(metadata.workspace_id||object.client_reference_id||'').trim();
+  const object=event.data.object||{},metadata=object.metadata||{},workspaceId=String(metadata.workspace_id||object.client_reference_id||'').trim();
+  if(!workspaceId)return null;
+  if(String(object.object)==='subscription'&&event.type!=='customer.subscription.deleted'){
+    const items=Array.isArray(object.items?.data)?object.items.data:[];
+    if(items.length!==1)throw new BillingError('Hosted billing expects exactly one recurring subscription item.',{code:'STRIPE_SUBSCRIPTION_ITEMS_UNSUPPORTED',statusCode:503});
+    const priceId=String(items[0]?.price?.id||items[0]?.plan?.id||'').trim();
+    const plan=findPlanByPrice(priceId,env);
+    if(!plan)throw new BillingError(`Stripe subscription uses an unconfigured Price: ${priceId||'(missing)'}.`,{code:'STRIPE_PRICE_NOT_CONFIGURED',statusCode:503});
+    return {workspaceId,plan,object};
+  }
   const planId=String(metadata.plan||'').trim();
-  if(!workspaceId||!planId)return null;
+  if(!planId)return null;
   return {workspaceId,plan:findPlan(planId,env),object};
 }
 
 export function applyStripeEvent(store,event,{rawBody='',env=process.env}={}){
   if(!store?.db)throw new TypeError('HostedStore is required');
-  const payloadHash=crypto.createHash('sha256').update(Buffer.isBuffer(rawBody)?rawBody:Buffer.from(String(rawBody||JSON.stringify(event)))).digest('hex');
-  const db=store.db;
+  const payloadHash=crypto.createHash('sha256').update(Buffer.isBuffer(rawBody)?rawBody:Buffer.from(String(rawBody||JSON.stringify(event)))).digest('hex'),db=store.db;
   db.exec('BEGIN IMMEDIATE');
   try{
-    if(db.prepare('SELECT 1 AS seen FROM billing_events WHERE provider_event_id=?').get(event.id)){
-      db.exec('COMMIT');return {applied:false,duplicate:true,entitlement:null};
-    }
-    const resolved=eventWorkspacePlan(event,env);
-    let entitlement=null;
-    const object=event.data.object||{};
+    if(db.prepare('SELECT 1 AS seen FROM billing_events WHERE provider_event_id=?').get(event.id)){db.exec('COMMIT');return {applied:false,duplicate:true,entitlement:null}}
+    const resolved=eventWorkspacePlan(event,env);let entitlement=null;const object=event.data.object||{};
     if(resolved){
       let status=null;
       if(event.type==='checkout.session.completed'){
         if(object.mode==='subscription'&&['paid','no_payment_required'].includes(String(object.payment_status)))status='active';
-      }else if(event.type==='customer.subscription.created'||event.type==='customer.subscription.updated'){
-        status=String(object.status||'inactive');
-      }else if(event.type==='customer.subscription.deleted'){
-        status='canceled';
-      }
+      }else if(event.type==='customer.subscription.created'||event.type==='customer.subscription.updated')status=String(object.status||'inactive');
+      else if(event.type==='customer.subscription.deleted')status='canceled';
       if(status){
         entitlement=store.setEntitlement(resolved.workspaceId,entitlementFromPlan(resolved.plan,status,object));
         store.audit({workspaceId:resolved.workspaceId,action:'billing.entitlement.sync',targetType:'subscription',targetId:entitlement.providerSubscriptionId,metadata:{provider:'stripe',eventId:event.id,eventType:event.type,plan:entitlement.plan,status:entitlement.status}});
       }
     }
     db.prepare('INSERT INTO billing_events(provider_event_id,type,payload_hash,processed_at) VALUES(?,?,?,?)').run(event.id,event.type,payloadHash,new Date().toISOString());
-    db.exec('COMMIT');
-    return {applied:true,duplicate:false,entitlement};
+    db.exec('COMMIT');return {applied:true,duplicate:false,entitlement};
   }catch(error){try{db.exec('ROLLBACK')}catch{}throw error}
 }
 
