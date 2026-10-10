@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const html=await fs.readFile(path.join(root,'public','index.html'),'utf8');
-const source=await fs.readFile(path.join(root,'public','portfolio.js'),'utf8');
+const portfolioFile=path.join(root,'public','portfolio.js');
+const source=await fs.readFile(portfolioFile,'utf8');
 
-test('hosted shell loads the agency portfolio module after existing app scripts',()=>{
+test('hosted shell loads a syntax-valid agency portfolio module after existing app scripts',()=>{
+  const checked=spawnSync(process.execPath,['--check',portfolioFile],{encoding:'utf8'});
+  assert.equal(checked.status,0,checked.stderr||checked.stdout);
   assert.match(html,/<script src="\/portfolio\.js"><\/script>/u);
   assert.ok(html.indexOf('/portfolio.js')>html.indexOf('/hosted-ui.js'));
   assert.ok(html.indexOf('/portfolio.js')>html.indexOf('/app.js'));
